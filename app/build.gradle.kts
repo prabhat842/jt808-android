@@ -54,4 +54,6 @@ dependencies {
     implementation("com.google.mlkit:face-detection:16.1.7")
     // ML Kit Object Detection — Phase 5 ADAS (FCW, LDW, pedestrian) + Phase 6 BSD
     implementation("com.google.mlkit:object-detection:17.0.2")
+    // CameraX VideoCapture — Phase 7 local recording
+    implementation("androidx.camera:camera-video:1.3.4")
 }

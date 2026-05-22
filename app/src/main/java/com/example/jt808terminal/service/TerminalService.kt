@@ -28,9 +28,15 @@ import com.example.jt808terminal.jt1078.IntercomManager
 import com.example.jt808terminal.jt1078.Jt1078Command
 import com.example.jt808terminal.jt1078.RtvsConnection
 import com.example.jt808terminal.jt1078.VideoEncoder
+import com.example.jt808terminal.media.FtpUploader
+import com.example.jt808terminal.media.PlaybackSession
+import com.example.jt808terminal.media.RecordingIndex
+import com.example.jt808terminal.media.VideoRecorder
+import com.example.jt808terminal.protocol.Jt808Messages
 import com.example.jt808terminal.protocol.Jt808TcpClientImpl
 import com.example.jt808terminal.protocol.LocationReporter
 import com.example.jt808terminal.protocol.MsgId
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -75,6 +81,12 @@ class TerminalService : LifecycleService() {
     private lateinit var adasEngine: AdasEngine
     @Volatile private var adasImageAnalysis: ImageAnalysis? = null
 
+    // Phase 7 — recording, playback, file upload
+    private lateinit var recordingIndex: RecordingIndex
+    private lateinit var videoRecorder: VideoRecorder
+    private var activePlayback: PlaybackSession? = null
+    private var activeFtpUploader: FtpUploader? = null
+
     // Active streaming session (null when not streaming)
     private var rtvsConnection: RtvsConnection? = null
     private var videoEncoder: VideoEncoder? = null
@@ -89,12 +101,14 @@ class TerminalService : LifecycleService() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "JT808Terminal:main")
             .also { it.acquire() }
 
-        dmsAlarmState  = DmsAlarmState()
-        dmsEngine      = DmsEngine(dmsAlarmState)
-        adasAlarmState = AdasAlarmState()
-        bsdAlarmState  = BsdAlarmState()
-        val bsdEngine  = BsdEngine(bsdAlarmState)
-        adasEngine     = AdasEngine(adasAlarmState, bsdEngine)
+        dmsAlarmState    = DmsAlarmState()
+        dmsEngine        = DmsEngine(dmsAlarmState)
+        adasAlarmState   = AdasAlarmState()
+        bsdAlarmState    = BsdAlarmState()
+        val bsdEngine    = BsdEngine(bsdAlarmState)
+        adasEngine       = AdasEngine(adasAlarmState, bsdEngine)
+        recordingIndex   = RecordingIndex(this)
+        videoRecorder    = VideoRecorder(this, channel = 1, recordingIndex)
 
         // ML Kit init on IO thread (both DMS and ADAS detectors), then bind both cameras on Main.
         scope.launch(Dispatchers.IO) {
@@ -103,6 +117,7 @@ class TerminalService : LifecycleService() {
             withContext(Dispatchers.Main) {
                 Log.i(TAG, "DMS + ADAS ready — starting always-on cameras")
                 rebindAllCameras()
+                videoRecorder.start()
             }
         }
 
@@ -125,6 +140,11 @@ class TerminalService : LifecycleService() {
 
         // ADAS FCW → immediate 0x0200 (same server-side trigger logic as DMS danger)
         adasEngine.onCollisionWarning = { locationReporter.reportNow() }
+        // Tag current recording segment with FCW alarm bit so 0x9205 alarm queries work
+        adasEngine.onCollisionWarning = {
+            locationReporter.reportNow()
+            videoRecorder.markAlarm(1L shl 29)  // Table 24 bit 29: Collision warning
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -139,6 +159,9 @@ class TerminalService : LifecycleService() {
 
     override fun onDestroy() {
         stopStreaming()
+        activePlayback?.stop(); activePlayback = null
+        activeFtpUploader?.isCancelled = true; activeFtpUploader = null
+        videoRecorder.stop()
         scope.cancel()
         jt808Client.disconnect()
         dmsEngine.stop()
@@ -179,14 +202,15 @@ class TerminalService : LifecycleService() {
                 }
             }
 
-            // Back camera — ADAS object detection (BsdEngine runs inside AdasEngine callback)
+            // Back camera — ADAS+BSD ImageAnalysis + VideoCapture for local recording
             val adasAnalysis = adasImageAnalysis
+            val videoCapture = videoRecorder.videoCapture
             if (adasAnalysis != null) {
                 provider.bindToLifecycle(
                     this, CameraSelector.DEFAULT_BACK_CAMERA,
-                    adasAnalysis,
+                    adasAnalysis, videoCapture,
                 )
-                Log.i(TAG, "Back camera bound — ADAS+BSD")
+                Log.i(TAG, "Back camera bound — ADAS+BSD+Recording")
             }
         }
     }
@@ -212,15 +236,16 @@ class TerminalService : LifecycleService() {
                 jt808Client.sendCommand(MsgId.UPLOAD_AV_ATTRIBUTES, Jt808Messages.avAttributes())
                 Log.i(TAG, "0x9003 → 0x1003 AV attributes sent (G.711A + H.264)")
             }
-            // 0x9205 — Query resource list: reply with 0x1205 empty list (no local recordings)
-            MsgId.QUERY_RESOURCE_LIST -> {
-                jt808Client.sendCommand(MsgId.UPLOAD_RESOURCE_LIST, Jt808Messages.resourceListEmpty(seqNum))
-                Log.i(TAG, "0x9205 → 0x1205 empty resource list sent (seq=$seqNum)")
-            }
-            MsgId.PLAYBACK_REQUEST  -> Log.i(TAG, "0x9201 playback request — Phase 7")
-            MsgId.PLAYBACK_CONTROL  -> Log.i(TAG, "0x9202 playback control — Phase 7")
-            MsgId.FILE_UPLOAD_CMD   -> Log.i(TAG, "0x9206 file upload cmd — Phase 7")
-            MsgId.FILE_UPLOAD_CONTROL -> Log.i(TAG, "0x9207 file upload ctrl — Phase 7")
+            // 0x9205 — Resource list query → 0x1205 response — JT/T 1078-2016 §5.6.1/§5.6.2
+            MsgId.QUERY_RESOURCE_LIST -> handle9205(body, seqNum)
+            // 0x9201 — Playback request — JT/T 1078-2016 §5.6.3
+            MsgId.PLAYBACK_REQUEST  -> mainHandler.post { handle9201(body, seqNum) }
+            // 0x9202 — Playback control — JT/T 1078-2016 §5.6.4
+            MsgId.PLAYBACK_CONTROL  -> handle9202(body)
+            // 0x9206 — File upload command — JT/T 1078-2016 §5.6.5
+            MsgId.FILE_UPLOAD_CMD   -> handle9206(body, seqNum)
+            // 0x9207 — File upload control — JT/T 1078-2016 §5.6.7
+            MsgId.FILE_UPLOAD_CONTROL -> handle9207(body)
             MsgId.PTZ_CONTROL, MsgId.FOCUS_CONTROL, MsgId.APERTURE_CONTROL,
             MsgId.WIPER_CONTROL, MsgId.INFRARED_CONTROL, MsgId.ZOOM_CONTROL ->
                 Log.d(TAG, "PTZ/camera control 0x${msgId.toString(16)} — no PTZ hardware")
@@ -256,6 +281,143 @@ class TerminalService : LifecycleService() {
             1 -> Log.i(TAG, "0x9102 pause — Phase 8")
             2 -> Log.i(TAG, "0x9102 resume — Phase 8")
             3 -> Log.i(TAG, "0x9102 switch stream — Phase 8")
+        }
+    }
+
+    // ---- Phase 7: playback + file management handlers -----------------------
+
+    /**
+     * 0x9205 Resource list query — JT/T 1078-2016 §5.6.1 Table 21.
+     * Body: [0]=channel, [1-6]=startBCD, [7-12]=endBCD, [13-20]=alarmFlags(8B),
+     *       [21]=resourceType, [22]=streamType, [23]=memoryType
+     */
+    private fun handle9205(body: ByteArray, seqNum: Int) {
+        if (body.size < 24) {
+            jt808Client.sendCommand(MsgId.UPLOAD_RESOURCE_LIST, Jt808Messages.resourceListEmpty(seqNum))
+            return
+        }
+        val channel      = body[0].toInt() and 0xFF
+        val startMs      = Jt1078Command.bcdToEpochMs(body, 1)
+        val endMs        = Jt1078Command.bcdToEpochMs(body, 7)
+        val alarmFlags   = run { var v = 0L; for (i in 0..7) v = (v shl 8) or (body[13 + i].toLong() and 0xFF); v }
+        val resourceType = body[21].toInt() and 0xFF
+
+        val matches = recordingIndex.query(channel, startMs, endMs, alarmFlags, resourceType)
+        val body1205 = if (matches.isEmpty()) Jt808Messages.resourceListEmpty(seqNum)
+                       else Jt808Messages.resourceList(seqNum, matches)
+        jt808Client.sendCommand(MsgId.UPLOAD_RESOURCE_LIST, body1205)
+        Log.i(TAG, "0x9205 → 0x1205 ${matches.size} recording(s) (seq=$seqNum)")
+    }
+
+    /**
+     * 0x9201 Remote playback request — JT/T 1078-2016 §5.6.3 Table 24.
+     * Terminal first sends 0x1205 with matching entries, then streams the recording.
+     */
+    private fun handle9201(body: ByteArray, seqNum: Int) {
+        val cmd = Jt1078Command.parse9201(body) ?: run {
+            Log.w(TAG, "0x9201 parse failed (${body.size}B)")
+            return
+        }
+        Log.i(TAG, "0x9201 → ${cmd.host}:${cmd.tcpPort} ch=${cmd.channel} method=${cmd.playbackMethod}")
+
+        val matches = recordingIndex.query(
+            channel      = cmd.channel,
+            startMs      = cmd.startMs,
+            endMs        = cmd.endMs,
+            alarmFlags   = 0L,
+            resourceType = cmd.avType,
+        )
+        // Reply with matching resource list first — spec §5.6.3
+        val body1205 = if (matches.isEmpty()) Jt808Messages.resourceListEmpty(seqNum)
+                       else Jt808Messages.resourceList(seqNum, matches)
+        jt808Client.sendCommand(MsgId.UPLOAD_RESOURCE_LIST, body1205)
+
+        if (matches.isEmpty()) { Log.i(TAG, "0x9201: no matching recordings"); return }
+
+        activePlayback?.stop()
+        val entry = matches.first()
+        val conn  = RtvsConnection(scope, cmd.channel, dataType = 1 /* video */)
+        conn.connect(cmd.host, cmd.tcpPort)
+        val session = PlaybackSession(
+            phoneNumber     = config.phoneNumber,
+            channel         = cmd.channel,
+            entry           = entry,
+            conn            = conn,
+            scope           = scope,
+            playbackMethod  = cmd.playbackMethod,
+            speedMultiplier = cmd.speedMultiplier,
+        )
+        activePlayback = session
+        session.start()
+    }
+
+    /** 0x9202 Playback control — JT/T 1078-2016 §5.6.4 Table 25. */
+    private fun handle9202(body: ByteArray) {
+        val cmd = Jt1078Command.parse9202(body) ?: return
+        val session = activePlayback ?: run {
+            Log.w(TAG, "0x9202 control=${cmd.control} but no active playback")
+            return
+        }
+        val ctrlCmd = when (cmd.control) {
+            0 -> PlaybackSession.ControlCmd.START
+            1 -> PlaybackSession.ControlCmd.PAUSE
+            2 -> PlaybackSession.ControlCmd.STOP
+            3 -> PlaybackSession.ControlCmd.FAST_FORWARD
+            4 -> PlaybackSession.ControlCmd.KEYFRAME_SNAP
+            5 -> PlaybackSession.ControlCmd.SEEK
+            6 -> PlaybackSession.ControlCmd.KEYFRAME_ONLY
+            else -> { Log.w(TAG, "0x9202 unknown control=${cmd.control}"); return }
+        }
+        session.control.trySend(ctrlCmd to cmd.seekMs)
+        if (cmd.control == 2) { activePlayback = null }
+        Log.i(TAG, "0x9202 ctrl=${cmd.control} ch=${cmd.channel}")
+    }
+
+    /**
+     * 0x9206 File upload command — JT/T 1078-2016 §5.6.5 Table 26.
+     * Finds matching recordings, uploads to FTP, sends 0x1206 on completion.
+     */
+    private fun handle9206(body: ByteArray, seqNum: Int) {
+        val cmd = Jt1078Command.parse9206(body, seqNum) ?: run {
+            Log.w(TAG, "0x9206 parse failed (${body.size}B)")
+            return
+        }
+        Log.i(TAG, "0x9206 FTP ${cmd.ftpHost}:${cmd.ftpPort} path=${cmd.uploadPath}")
+
+        val matches = recordingIndex.query(
+            channel      = cmd.channel,
+            startMs      = cmd.startMs,
+            endMs        = cmd.endMs,
+            alarmFlags   = cmd.alarmFlags,
+            resourceType = cmd.resourceType,
+        )
+        if (matches.isEmpty()) {
+            jt808Client.sendCommand(MsgId.FILE_UPLOAD_COMPLETE,
+                Jt808Messages.fileUploadComplete(seqNum, success = true))
+            return
+        }
+
+        val uploader = FtpUploader(cmd.ftpHost, cmd.ftpPort, cmd.username, cmd.password, cmd.uploadPath)
+        activeFtpUploader = uploader
+        scope.launch {
+            val files = matches.map { File(it.filePath) }.filter { it.exists() }
+            val ok = uploader.upload(files)
+            jt808Client.sendCommand(MsgId.FILE_UPLOAD_COMPLETE,
+                Jt808Messages.fileUploadComplete(seqNum, ok))
+            if (activeFtpUploader === uploader) activeFtpUploader = null
+            Log.i(TAG, "0x9206 upload complete success=$ok (${files.size} file(s))")
+        }
+    }
+
+    /** 0x9207 File upload control — JT/T 1078-2016 §5.6.7 Table 28. */
+    private fun handle9207(body: ByteArray) {
+        val cmd = Jt1078Command.parse9207(body) ?: return
+        val uploader = activeFtpUploader ?: return
+        when (cmd.uploadControl) {
+            0 -> { uploader.isPaused    = true;  Log.i(TAG, "0x9207 upload suspended") }
+            1 -> { uploader.isPaused    = false; Log.i(TAG, "0x9207 upload resumed") }
+            2 -> { uploader.isCancelled = true;  activeFtpUploader = null
+                   Log.i(TAG, "0x9207 upload cancelled") }
         }
     }
 

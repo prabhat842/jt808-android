@@ -1,6 +1,7 @@
 package com.example.jt808terminal.protocol
 
 import com.example.jt808terminal.core.TerminalConfig
+import com.example.jt808terminal.media.RecordingEntry
 import java.util.Calendar
 import java.util.TimeZone
 
@@ -186,14 +187,55 @@ object Jt808Messages {
     )
 
     /**
-     * 0x1205 Resource list upload body — JT/T 1078-2016 §5.6.
-     * Sent in response to 0x9205; empty list when no local recordings exist.
+     * 0x1205 Audio/Video resource list — JT/T 1078-2016 §5.6.2 Table 22/23.
      *
-     * [0-1] Response seq  WORD  echoes the 0x9205 message serial number
-     * [2-5] File count    DWORD 0 = no files available
+     * Header (6 bytes):
+     *   [0-1] Response seq  WORD   echoes the 0x9205 message serial number
+     *   [2-5] File count    DWORD  number of entries that follow
+     *
+     * Each entry (28 bytes) — Table 23:
+     *   [0]     logical channel  BYTE
+     *   [1-6]   start time       BCD[6]  yy-mm-dd-hh-mm-ss (GMT+8)
+     *   [7-12]  end time         BCD[6]
+     *   [13-20] warning sign     64BITS  JT808 alarm flags
+     *   [21]    resource type    BYTE    0=AV,1=audio,2=video
+     *   [22]    stream type      BYTE    1=main,2=sub
+     *   [23]    memory type      BYTE    1=main,2=disaster-recovery
+     *   [24-27] file size        DWORD   bytes
      */
+    fun resourceList(responseSeq: Int, entries: List<RecordingEntry>): ByteArray {
+        val buf = ArrayList<Byte>(6 + entries.size * 28)
+        buf.add((responseSeq shr 8).toByte()); buf.add((responseSeq and 0xFF).toByte())
+        val count = entries.size
+        buf.add((count ushr 24).toByte()); buf.add((count ushr 16).toByte())
+        buf.add((count ushr 8).toByte());  buf.add((count and 0xFF).toByte())
+        for (e in entries) {
+            buf.add(e.channel.toByte())
+            for (b in bcdTimestampGmt8(e.startMs)) buf.add(b)
+            for (b in bcdTimestampGmt8(e.endMs))   buf.add(b)
+            val alarm = e.alarmFlags
+            for (shift in 56 downTo 0 step 8) buf.add((alarm ushr shift).toByte())
+            buf.add(e.resourceType.toByte())
+            buf.add(e.streamType.toByte())
+            buf.add(e.memoryType.toByte())
+            val sz = e.fileSizeBytes.toInt()
+            buf.add((sz ushr 24).toByte()); buf.add((sz ushr 16).toByte())
+            buf.add((sz ushr 8).toByte());  buf.add((sz and 0xFF).toByte())
+        }
+        return buf.toByteArray()
+    }
+
+    /** 0x1205 with zero entries — sent when no recordings match the 0x9205 query. */
     fun resourceListEmpty(responseSeq: Int): ByteArray =
         word(responseSeq) + dword(0)
+
+    /**
+     * 0x1206 File upload completion notification — JT/T 1078-2016 §5.6.6 Table 27.
+     *   [0-1] Response seq (WORD) — echoes the 0x9206 seqNum
+     *   [2]   Result (BYTE) — 0=success, 1=failure
+     */
+    fun fileUploadComplete(responseSeq: Int, success: Boolean): ByteArray =
+        word(responseSeq) + byteArrayOf(if (success) 0 else 1)
 
     // -- Additional info item builders for DMS/ADAS/BSD (Phase 4+) --------
 
