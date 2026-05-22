@@ -8,8 +8,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import androidx.lifecycle.LifecycleService
+import android.util.Size
+import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleService
 import com.example.jt808terminal.core.AppSettings
 import com.example.jt808terminal.core.TerminalConfig
 import com.example.jt808terminal.dms.DmsAlarmState
@@ -26,10 +31,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Foreground service hosting all vehicle terminal subsystems.
  * Extends LifecycleService so it acts as a LifecycleOwner for CameraX binding.
+ *
+ * Camera is ALWAYS ON once the service starts — DMS/ADAS/BSD run regardless of server state.
+ * When 0x9101 arrives the Preview use case is added alongside the always-on ImageAnalysis.
+ * When 0x9102 stops streaming, the Preview is removed but DMS camera session stays alive.
  *
  * Phase 1: JT808 TCP signaling (registration, auth, heartbeat, 0x0200 location)
  * Phase 2: JT1078 video streaming via RtvsConnection + VideoEncoder
@@ -48,15 +58,14 @@ class TerminalService : LifecycleService() {
     private lateinit var jt808Client: Jt808TcpClientImpl
     private lateinit var locationReporter: LocationReporter
 
-    // Phase 4 — DMS (created once; ImageAnalysis use case reused across streaming sessions)
+    // DMS — always-on from service start
     private lateinit var dmsAlarmState: DmsAlarmState
     private lateinit var dmsEngine: DmsEngine
-    private var dmsImageAnalysis: ImageAnalysis? = null
+    @Volatile private var dmsImageAnalysis: ImageAnalysis? = null
 
-    // Phase 2 — active streaming state (null when not streaming)
+    // Active streaming session (null when not streaming)
     private var rtvsConnection: RtvsConnection? = null
     private var videoEncoder: VideoEncoder? = null
-    // Phase 3 — active intercom (null when not in intercom session)
     private var intercomManager: IntercomManager? = null
 
     override fun onCreate() {
@@ -65,9 +74,15 @@ class TerminalService : LifecycleService() {
 
         dmsAlarmState = DmsAlarmState()
         dmsEngine = DmsEngine(dmsAlarmState)
-        // Init ML Kit off the main thread — FaceDetection.getClient() loads the TFLite runtime.
-        // dmsImageAnalysis is null-checked before use in startStreaming(), so the race is safe.
-        scope.launch(Dispatchers.IO) { dmsImageAnalysis = dmsEngine.getImageAnalysis() }
+
+        // ML Kit init on IO thread, then start always-on camera on Main.
+        scope.launch(Dispatchers.IO) {
+            dmsImageAnalysis = dmsEngine.getImageAnalysis()
+            withContext(Dispatchers.Main) {
+                Log.i(TAG, "DMS ready — starting always-on camera")
+                bindCamera()   // DMS-only session, runs before any 0x9101 arrives
+            }
+        }
 
         jt808Client = Jt808TcpClientImpl(config, scope)
         jt808Client.onCommand = { frame ->
@@ -81,29 +96,80 @@ class TerminalService : LifecycleService() {
         super.onStartCommand(intent, flags, startId)
         ensureChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
-
         jt808Client.start()
         locationReporter.start()
-
         Log.i(TAG, "TerminalService started")
         return START_STICKY
     }
 
     override fun onDestroy() {
-        stopStreamingOnMain()
+        stopStreaming()
         scope.cancel()
         jt808Client.disconnect()
         dmsEngine.stop()
         super.onDestroy()
     }
 
-    // ---- Platform command dispatch ----------------------------------------
+    // ---- Camera binding (all CameraX lifecycle management lives here) --------
+
+    /**
+     * Binds DMS ImageAnalysis only — the always-on camera session.
+     * Called at startup and after streaming stops.
+     */
+    private fun bindCamera() {
+        val analysis = dmsImageAnalysis ?: return
+        withCameraProvider { provider ->
+            provider.unbindAll()
+            provider.bindToLifecycle(
+                this,
+                CameraSelector.DEFAULT_FRONT_CAMERA,
+                analysis,
+            )
+            Log.i(TAG, "Camera bound — DMS always-on")
+        }
+    }
+
+    /**
+     * Binds Preview (for encoder) + DMS ImageAnalysis together.
+     * The encoder's input surface is already created at this point (setupCodec runs in init).
+     */
+    private fun bindCameraWithStreaming(enc: VideoEncoder) {
+        val analysis = dmsImageAnalysis
+        withCameraProvider { provider ->
+            val preview = Preview.Builder()
+                .setTargetResolution(Size(enc.videoWidth, enc.videoHeight))
+                .build()
+            preview.setSurfaceProvider { request ->
+                request.provideSurface(
+                    enc.getInputSurface(),
+                    ContextCompat.getMainExecutor(this),
+                ) {}
+            }
+            provider.unbindAll()
+            if (analysis != null) {
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, preview, analysis)
+            } else {
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, preview)
+            }
+            Log.i(TAG, "Camera bound — streaming + DMS")
+        }
+    }
+
+    private fun withCameraProvider(block: (ProcessCameraProvider) -> Unit) {
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            try { block(future.get()) }
+            catch (e: Exception) { Log.e(TAG, "CameraProvider error: ${e.message}") }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    // ---- Platform command dispatch -------------------------------------------
 
     private fun handlePlatformCommand(msgId: Int, seqNum: Int, body: ByteArray) {
         when (msgId) {
             MsgId.REALTIME_AV_REQUEST -> handle9101(body)
             MsgId.AV_CONTROL          -> handle9102(body)
-            MsgId.AV_STATUS_NOTIFY    -> {} // platform → terminal direction; terminal just ACKs
+            MsgId.AV_STATUS_NOTIFY    -> {}
             MsgId.PARAMETER_SETTING   -> Log.i(TAG, "0x8103 params (${body.size}B) — Phase 8")
             MsgId.AV_ATTRIBUTES_QUERY -> Log.i(TAG, "0x9003 AV attr query — Phase 2 TODO")
             else -> Log.d(TAG, "Unhandled 0x${msgId.toString(16).uppercase()}")
@@ -112,14 +178,8 @@ class TerminalService : LifecycleService() {
 
     /**
      * 0x9101 Real-time A/V request — JT/T 1078-2016 §5.5.1.
-     * Body (decoded by Jt1078Command helper):
-     *   [0]     IP length BYTE
-     *   [1..n]  Server IP STRING
-     *   [n+1-2] TCP port WORD
-     *   [n+3-4] UDP port WORD
-     *   [n+5]   Channel BYTE
-     *   [n+6]   Data type BYTE  (0=AV, 1=video, 2=intercom, 3=listen, 4=broadcast)
-     *   [n+7]   Stream type BYTE (0=main, 1=sub)
+     * Body: IP length(1) + IP(n) + tcpPort(2) + udpPort(2) + channel(1) + dataType(1) + streamType(1)
+     * dataType: 0=AV 1=video 2=intercom 3=listen 4=broadcast
      */
     private fun handle9101(body: ByteArray) {
         val cmd = Jt1078Command.parse9101(body) ?: run {
@@ -133,63 +193,59 @@ class TerminalService : LifecycleService() {
     /**
      * 0x9102 A/V transmission control — JT/T 1078-2016 §5.5.2.
      * Body: channel(1) + command(1) + param(1) + streamType(1)
-     * Commands: 1=pause, 2=resume, 3=switch, 4=close intercom
+     * command 4 = close / stop stream
      */
     private fun handle9102(body: ByteArray) {
-        if (body.size < 4) return
+        if (body.size < 2) return
         val command = body[1].toInt() and 0xFF
         Log.i(TAG, "0x9102 command=$command")
         when (command) {
-            4 -> mainHandler.post { stopStreamingOnMain() }  // close intercom / stop stream
+            4 -> mainHandler.post { stopStreaming() }
             1 -> Log.i(TAG, "0x9102 pause — Phase 8")
             2 -> Log.i(TAG, "0x9102 resume — Phase 8")
             3 -> Log.i(TAG, "0x9102 switch stream — Phase 8")
         }
     }
 
-    // ---- Streaming lifecycle (must run on main thread for CameraX) ---------
+    // ---- Streaming lifecycle (main thread) -----------------------------------
 
     private fun startStreaming(cmd: Jt1078Command.Request9101) {
-        stopStreamingOnMain()
+        stopStreaming()
 
         val conn = RtvsConnection(scope, cmd.channel, cmd.dataType)
         conn.connect(cmd.host, cmd.tcpPort)
         rtvsConnection = conn
 
         when (cmd.dataType) {
-            // dataType=0 (AV) or dataType=1 (video only) — JT/T 1078-2016 §5.5.1
             0, 1 -> {
                 val enc = VideoEncoder(
-                    context = this,
-                    phoneNumber = config.phoneNumber,
-                    channel = cmd.channel,
+                    phoneNumber  = config.phoneNumber,
+                    channel      = cmd.channel,
                     rtvsConnection = conn,
                 )
-                // Bind DMS ImageAnalysis alongside Preview so both share one camera session.
-                val dmsAnalysis = dmsImageAnalysis
-                if (dmsAnalysis != null) enc.start(this, dmsAnalysis) else enc.start(this)
+                enc.start()
                 videoEncoder = enc
+                bindCameraWithStreaming(enc)   // adds Preview alongside always-on DMS
             }
-            // dataType=2 — two-way intercom, audio only — JT/T 1078-2016 §5.5.1
             2 -> {
                 val intercom = IntercomManager(config.phoneNumber, cmd.channel, conn)
                 intercom.start()
                 intercomManager = intercom
+                // Audio-only intercom: camera stays in DMS-only mode (no Preview change)
             }
-            // dataType=3 (listen) and dataType=4 (broadcast) — server-initiated, no uplink
+            // dataType 3/4 — server-initiated listen/broadcast; no uplink from terminal
         }
     }
 
-    private fun stopStreamingOnMain() {
-        intercomManager?.stop()
-        intercomManager = null
-        videoEncoder?.stop()
-        videoEncoder = null
-        rtvsConnection?.disconnect()
-        rtvsConnection = null
+    private fun stopStreaming() {
+        intercomManager?.stop(); intercomManager = null
+        videoEncoder?.stop();    videoEncoder = null
+        rtvsConnection?.disconnect(); rtvsConnection = null
+        // Revert camera to DMS-only session after streaming ends
+        bindCamera()
     }
 
-    // ---- Config / notification --------------------------------------------
+    // ---- Config / notification ----------------------------------------------
 
     private fun buildConfig(): TerminalConfig {
         val s = AppSettings(this)

@@ -56,7 +56,7 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
     /**
      * Builds and returns the CameraX ImageAnalysis use case.
      * The HandlerThread and detector are started here; frames won't flow until
-     * the use case is bound to a camera lifecycle by VideoEncoder.bindCamera().
+     * the use case is bound to a camera lifecycle by TerminalService.bindCamera().
      * Call once; reuse the returned instance across streaming sessions.
      */
     fun getImageAnalysis(): ImageAnalysis {
