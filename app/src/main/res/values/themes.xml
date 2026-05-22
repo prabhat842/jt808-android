@@ -1,3 +1,10 @@
 <resources>
-    <style name="Theme.Jt808Terminal" parent="Theme.MaterialComponents.DayNight.NoActionBar" />
+    <style name="Theme.Jt808Terminal" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="android:windowBackground">#121212</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#121212</item>
+        <item name="colorPrimary">#4CAF50</item>
+        <item name="colorPrimaryVariant">#388E3C</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+    </style>
 </resources>
