@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <!-- Toolbar row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp">
+
+            <TextView
+                android:id="@+id/btnBack"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="←"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:paddingEnd="16dp"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Settings"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- JT808 Server -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="JT808 SERVER"
+            android:textColor="#888888"
+            android:textSize="11sp"
+            android:letterSpacing="0.12"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#1E1E1E"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Host / IP"
+                android:textColor="#888888"
+                android:textSize="12sp" />
+            <EditText
+                android:id="@+id/etJt808Host"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#555555"
+                android:hint="e.g. 192.168.1.10"
+                android:background="@null"
+                android:paddingTop="6dp"
+                android:paddingBottom="8dp"
+                android:textSize="16sp"
+                android:fontFamily="monospace" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#333333"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Port"
+                android:textColor="#888888"
+                android:textSize="12sp" />
+            <EditText
+                android:id="@+id/etJt808Port"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#555555"
+                android:hint="6808"
+                android:background="@null"
+                android:paddingTop="6dp"
+                android:paddingBottom="4dp"
+                android:textSize="16sp"
+                android:fontFamily="monospace" />
+        </LinearLayout>
+
+        <!-- RTVS Server -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="RTVS / JT1078 SERVER"
+            android:textColor="#888888"
+            android:textSize="11sp"
+            android:letterSpacing="0.12"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#1E1E1E"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Host / IP"
+                android:textColor="#888888"
+                android:textSize="12sp" />
+            <EditText
+                android:id="@+id/etRtvsHost"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#555555"
+                android:hint="e.g. 192.168.1.10"
+                android:background="@null"
+                android:paddingTop="6dp"
+                android:paddingBottom="8dp"
+                android:textSize="16sp"
+                android:fontFamily="monospace" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#333333"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Port"
+                android:textColor="#888888"
+                android:textSize="12sp" />
+            <EditText
+                android:id="@+id/etRtvsPort"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#555555"
+                android:hint="6600"
+                android:background="@null"
+                android:paddingTop="6dp"
+                android:paddingBottom="4dp"
+                android:textSize="16sp"
+                android:fontFamily="monospace" />
+        </LinearLayout>
+
+        <!-- Terminal Identity -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="TERMINAL IDENTITY"
+            android:textColor="#888888"
+            android:textSize="11sp"
+            android:letterSpacing="0.12"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#1E1E1E"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SIM Phone Number (12 digits)"
+                android:textColor="#888888"
+                android:textSize="12sp" />
+            <EditText
+                android:id="@+id/etPhone"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="phone"
+                android:maxLength="12"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#555555"
+                android:hint="000000000001"
+                android:background="@null"
+                android:paddingTop="6dp"
+                android:paddingBottom="8dp"
+                android:textSize="16sp"
+                android:fontFamily="monospace" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#333333"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Terminal ID (max 7 chars)"
+                android:textColor="#888888"
+                android:textSize="12sp" />
+            <EditText
+                android:id="@+id/etTerminalId"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="text"
+                android:maxLength="7"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#555555"
+                android:hint="GOATAI1"
+                android:background="@null"
+                android:paddingTop="6dp"
+                android:paddingBottom="4dp"
+                android:textSize="16sp"
+                android:fontFamily="monospace" />
+        </LinearLayout>
+
+        <!-- Save button -->
+        <TextView
+            android:id="@+id/btnSave"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:background="#4CAF50"
+            android:gravity="center"
+            android:text="SAVE AND RESTART"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.05"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <TextView
+            android:id="@+id/tvError"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="#F44336"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+    </LinearLayout>
+</ScrollView>

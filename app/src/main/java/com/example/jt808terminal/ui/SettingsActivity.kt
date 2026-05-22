@@ -1,0 +1,91 @@
+package com.example.jt808terminal.ui
+
+import android.app.Activity
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.widget.EditText
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import com.example.jt808terminal.R
+import com.example.jt808terminal.core.AppSettings
+import com.example.jt808terminal.service.TerminalService
+
+class SettingsActivity : AppCompatActivity() {
+
+    private lateinit var settings: AppSettings
+    private lateinit var etJt808Host: EditText
+    private lateinit var etJt808Port: EditText
+    private lateinit var etRtvsHost: EditText
+    private lateinit var etRtvsPort: EditText
+    private lateinit var etPhone: EditText
+    private lateinit var etTerminalId: EditText
+    private lateinit var tvError: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_settings)
+
+        settings = AppSettings(this)
+
+        etJt808Host  = findViewById(R.id.etJt808Host)
+        etJt808Port  = findViewById(R.id.etJt808Port)
+        etRtvsHost   = findViewById(R.id.etRtvsHost)
+        etRtvsPort   = findViewById(R.id.etRtvsPort)
+        etPhone      = findViewById(R.id.etPhone)
+        etTerminalId = findViewById(R.id.etTerminalId)
+        tvError      = findViewById(R.id.tvError)
+
+        loadCurrent()
+
+        findViewById<TextView>(R.id.btnBack).setOnClickListener { finish() }
+        findViewById<TextView>(R.id.btnSave).setOnClickListener { save() }
+    }
+
+    private fun loadCurrent() {
+        etJt808Host.setText(settings.jt808Host)
+        etJt808Port.setText(settings.jt808Port.toString())
+        etRtvsHost.setText(settings.rtvsHost)
+        etRtvsPort.setText(settings.rtvsPort.toString())
+        etPhone.setText(settings.phoneNumber)
+        etTerminalId.setText(settings.terminalId)
+    }
+
+    private fun save() {
+        val jt808Host  = etJt808Host.text.toString().trim()
+        val jt808PortS = etJt808Port.text.toString().trim()
+        val rtvsHost   = etRtvsHost.text.toString().trim()
+        val rtvsPortS  = etRtvsPort.text.toString().trim()
+        val phone      = etPhone.text.toString().trim()
+        val termId     = etTerminalId.text.toString().trim()
+
+        if (jt808Host.isBlank()) { showError("JT808 host is required"); return }
+        if (rtvsHost.isBlank())  { showError("RTVS host is required"); return }
+        if (phone.length != 12)  { showError("Phone number must be exactly 12 digits"); return }
+        if (termId.isBlank())    { showError("Terminal ID is required"); return }
+
+        val jt808Port = jt808PortS.toIntOrNull()?.takeIf { it in 1..65535 }
+            ?: run { showError("JT808 port must be 1–65535"); return }
+        val rtvsPort  = rtvsPortS.toIntOrNull()?.takeIf { it in 1..65535 }
+            ?: run { showError("RTVS port must be 1–65535"); return }
+
+        settings.jt808Host   = jt808Host
+        settings.jt808Port   = jt808Port
+        settings.rtvsHost    = rtvsHost
+        settings.rtvsPort    = rtvsPort
+        settings.phoneNumber = phone
+        settings.terminalId  = termId
+
+        // Stop and restart the service so it picks up the new config
+        stopService(Intent(this, TerminalService::class.java))
+        startForegroundService(Intent(this, TerminalService::class.java))
+
+        setResult(Activity.RESULT_OK)
+        finish()
+    }
+
+    private fun showError(msg: String) {
+        tvError.text = msg
+        tvError.visibility = View.VISIBLE
+    }
+}

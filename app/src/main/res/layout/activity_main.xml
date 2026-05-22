@@ -5,39 +5,91 @@
     android:background="#121212"
     android:gravity="center_horizontal"
     android:orientation="vertical"
-    android:padding="24dp">
+    android:padding="20dp">
 
-    <!-- Header -->
-    <TextView
-        android:layout_width="wrap_content"
+    <!-- Header row: title + settings gear -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="48dp"
-        android:text="@string/app_name"
-        android:textColor="#FFFFFF"
-        android:textSize="28sp"
-        android:textStyle="bold" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingTop="32dp"
+        android:paddingBottom="8dp">
 
-    <TextView
-        android:id="@+id/tvSubtitle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="Vehicle Intelligence Terminal"
-        android:textColor="#AAAAAA"
-        android:textSize="13sp" />
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textColor="#FFFFFF"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Vehicle Intelligence Terminal"
+                android:textColor="#AAAAAA"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/btnSettings"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:gravity="center"
+            android:text="⚙"
+            android:textColor="#AAAAAA"
+            android:textSize="22sp"
+            android:clickable="true"
+            android:focusable="true" />
+    </LinearLayout>
 
     <!-- Divider -->
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:layout_marginTop="32dp"
-        android:background="#333333" />
+        android:layout_marginTop="12dp"
+        android:background="#2A2A2A" />
 
-    <!-- Status card -->
+    <!-- Config warning (shown when not configured) -->
+    <LinearLayout
+        android:id="@+id/cardNotConfigured"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:background="#3E2723"
+        android:orientation="vertical"
+        android:padding="14dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚠  Server not configured"
+            android:textColor="#FF8A65"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Tap ⚙ to enter server IP and port"
+            android:textColor="#FFCCBC"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- Service status -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
+        android:layout_marginTop="16dp"
         android:background="#1E1E1E"
         android:orientation="vertical"
         android:padding="16dp">
@@ -60,11 +112,11 @@
             android:textSize="15sp" />
     </LinearLayout>
 
-    <!-- Server config card -->
+    <!-- Server config (read-only display) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="10dp"
         android:background="#1E1E1E"
         android:orientation="vertical"
         android:padding="16dp">
@@ -82,7 +134,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="192.168.1.100 : 6808"
+            android:text="—"
             android:textColor="#DDDDDD"
             android:textSize="15sp"
             android:fontFamily="monospace" />
@@ -107,17 +159,17 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="192.168.1.100 : 6600"
+            android:text="—"
             android:textColor="#DDDDDD"
             android:textSize="15sp"
             android:fontFamily="monospace" />
     </LinearLayout>
 
-    <!-- Permissions card -->
+    <!-- Permissions -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="10dp"
         android:background="#1E1E1E"
         android:orientation="vertical"
         android:padding="16dp">
@@ -142,13 +194,13 @@
 
     <TextView
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|center_horizontal"
+        android:layout_height="0dp"
         android:layout_weight="1"
+        android:layout_gravity="bottom|center_horizontal"
         android:gravity="bottom|center_horizontal"
-        android:paddingBottom="24dp"
+        android:paddingBottom="20dp"
         android:text="GoatAI / MultiphysicsAI"
-        android:textColor="#555555"
+        android:textColor="#444444"
         android:textSize="12sp" />
 
 </LinearLayout>

@@ -1,37 +1,73 @@
 package com.example.jt808terminal.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.View
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.example.jt808terminal.R
+import com.example.jt808terminal.core.AppSettings
 import com.example.jt808terminal.service.TerminalService
 
 class MainActivity : AppCompatActivity() {
+
+    private lateinit var settings: AppSettings
 
     private val permissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         refreshPermissionsRow()
         val allGranted = results.values.all { it }
-        setServiceStatus(if (allGranted) "● Running" else "● Running (limited)", allGranted)
+        setServiceStatus("● Running", allGranted)
         startTerminalService()
+    }
+
+    private val settingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            // Service was already restarted inside SettingsActivity — just refresh the display
+            refreshServerDisplay()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        settings = AppSettings(this)
 
-        // Hard-coded to match TerminalService.buildConfig() defaults
-        findViewById<TextView>(R.id.tvServerAddr).text = "192.168.1.100 : 6808"
-        findViewById<TextView>(R.id.tvRtvsAddr).text   = "192.168.1.100 : 6600"
+        findViewById<TextView>(R.id.btnSettings).setOnClickListener {
+            settingsLauncher.launch(Intent(this, SettingsActivity::class.java))
+        }
 
+        refreshServerDisplay()
         refreshPermissionsRow()
         requestPermissionsAndStart()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshServerDisplay()
+    }
+
+    private fun refreshServerDisplay() {
+        val jt808Addr = if (settings.jt808Host.isBlank()) "—"
+            else "${settings.jt808Host} : ${settings.jt808Port}"
+        val rtvsAddr  = if (settings.rtvsHost.isBlank()) "—"
+            else "${settings.rtvsHost} : ${settings.rtvsPort}"
+
+        findViewById<TextView>(R.id.tvServerAddr).text = jt808Addr
+        findViewById<TextView>(R.id.tvRtvsAddr).text   = rtvsAddr
+
+        val notConfigured = !settings.isConfigured()
+        findViewById<LinearLayout>(R.id.cardNotConfigured).visibility =
+            if (notConfigured) View.VISIBLE else View.GONE
     }
 
     private fun requestPermissionsAndStart() {
@@ -63,8 +99,8 @@ class MainActivity : AppCompatActivity() {
         startForegroundService(Intent(this, TerminalService::class.java))
     }
 
-    private fun isGranted(permission: String) =
-        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+    private fun isGranted(p: String) =
+        ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
 
     companion object {
         private val REQUIRED_PERMISSIONS = listOf(

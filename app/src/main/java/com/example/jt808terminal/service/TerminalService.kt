@@ -10,6 +10,7 @@ import android.os.Looper
 import android.util.Log
 import androidx.lifecycle.LifecycleService
 import androidx.camera.core.ImageAnalysis
+import com.example.jt808terminal.core.AppSettings
 import com.example.jt808terminal.core.TerminalConfig
 import com.example.jt808terminal.dms.DmsAlarmState
 import com.example.jt808terminal.dms.DmsEngine
@@ -190,14 +191,17 @@ class TerminalService : LifecycleService() {
 
     // ---- Config / notification --------------------------------------------
 
-    private fun buildConfig() = TerminalConfig(
-        phoneNumber = "000000000001",   // TODO: replace with SIM phone number (12 digits)
-        terminalId  = "GOATAI1",        // TODO: replace with 7-char device serial
-        serverHost  = "192.168.1.100",  // TODO: set your jt808-server IP
-        serverPort  = 6808,
-        rtvsHost    = "192.168.1.100",  // TODO: set your jt808-rtvs IP
-        rtvsPort    = 6600,
-    )
+    private fun buildConfig(): TerminalConfig {
+        val s = AppSettings(this)
+        return TerminalConfig(
+            phoneNumber = s.phoneNumber,
+            terminalId  = s.terminalId,
+            serverHost  = s.jt808Host,
+            serverPort  = s.jt808Port,
+            rtvsHost    = s.rtvsHost,
+            rtvsPort    = s.rtvsPort,
+        )
+    }
 
     private fun buildNotification(): Notification =
         Notification.Builder(this, CHANNEL_ID)
