@@ -38,19 +38,32 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
     private val handlerThread = HandlerThread("dms-analysis")
     private var detector: FaceDetector? = null
     private val perclos = PerclosTracker(windowMs = 60_000L)
+
+    // HandlerThread-affine state (only touched from the DMS HandlerThread)
     private var lastYawnMs = 0L
+    private val yawnTimestamps = ArrayDeque<Long>()  // 10-min yawn count window
+    private var lastFaceSeenMs = 0L                  // for no-face timeout
+
+    /** Invoked when alarm level first reaches 2 (danger). Triggers immediate 0x0200. */
+    var onAlarmLevelChange: ((Int) -> Unit)? = null
 
     companion object {
         private const val TAG = "DmsEngine"
-        // JT808-2013 Table 24: bit 14 = fatigue driving warning
-        // PERCLOS threshold: 35% eye-closed fraction triggers fatigue — NHTSA guideline
-        private const val FATIGUE_THRESHOLD = 0.35f
-        // Eye-open probability < 0.3 → consider eyes closed (ML Kit range 0.0-1.0)
+        // PERCLOS thresholds — spec §5.2: level 1 warning / level 2 danger
+        private const val PERCLOS_L1 = 0.35f   // 35% → level 1 warning
+        private const val PERCLOS_L2 = 0.50f   // 50% → level 2 danger + auto 0x9101
+        // Eye-open probability < 0.3 → consider eyes closed (ML Kit 0.0-1.0 range)
         private const val EYE_CLOSED_PROB = 0.3f
-        // Mouth open (lip gap / face height) > 0.20 → yawning
+        // Mouth open ratio > 0.20 → yawning
         private const val YAWN_THRESHOLD = 0.20f
-        // Suppress repeated yawn events for 10 seconds
+        // Suppress repeated yawn detection for 10 s
         private const val YAWN_COOLDOWN_MS = 10_000L
+        // 3 yawns in 10-minute window → additional fatigue signal — spec §5.3
+        private const val YAWN_WINDOW_MS = 600_000L
+        private const val YAWN_COUNT_THRESHOLD = 3
+        // No face visible for 10 s while speed > 20 km/h → danger alarm — spec §5.2
+        private const val NO_FACE_TIMEOUT_MS = 10_000L
+        private const val NO_FACE_SPEED_KPH = 20f
     }
 
     /**
@@ -92,6 +105,7 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
         alarmState.behaviourFlags = 0
         alarmState.fatigueDegree = 0
         alarmState.faceDetected = false
+        alarmState.alarmLevel = 0
         Log.i(TAG, "DmsEngine stopped")
     }
 
@@ -118,14 +132,27 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
 
     // Runs on the DMS HandlerThread.
     private fun onFaces(faces: List<Face>) {
+        val now = System.currentTimeMillis()
+
         if (faces.isEmpty()) {
             alarmState.faceDetected = false
-            // Don't update PERCLOS when face not visible — driver may be briefly looking away
+            // Don't update PERCLOS — driver may be briefly looking away.
+            // Check no-face timeout: if face absent for > 10 s while driving → danger alarm.
+            if (lastFaceSeenMs > 0
+                && (now - lastFaceSeenMs) > NO_FACE_TIMEOUT_MS
+                && alarmState.currentSpeedKph > NO_FACE_SPEED_KPH
+            ) {
+                val prevLevel = alarmState.alarmLevel
+                alarmState.behaviourFlags = alarmState.behaviourFlags or 0x01
+                alarmState.fatigueDegree = 100
+                updateAlarmLevel(2, prevLevel)
+                Log.w(TAG, "No face for ${(now - lastFaceSeenMs) / 1000}s at ${alarmState.currentSpeedKph}km/h — danger alarm")
+            }
             return
         }
 
-        val face = faces[0]   // primary face (largest area)
-        val now = System.currentTimeMillis()
+        val face = faces[0]   // primary face (largest area, first in list)
+        lastFaceSeenMs = now
         alarmState.faceDetected = true
 
         // ----- PERCLOS (eye closure) ----------------------------------------
@@ -135,31 +162,61 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
             leftP != null && rightP != null -> ((leftP + rightP) / 2f) < EYE_CLOSED_PROB
             leftP  != null -> leftP  < EYE_CLOSED_PROB
             rightP != null -> rightP < EYE_CLOSED_PROB
-            else -> false   // no eye data — skip this sample
+            else -> false   // no eye data — skip sample
         }
         perclos.record(eyesClosed, now)
 
         val perclosValue = perclos.perclos()
-        val isFatigued = perclosValue >= FATIGUE_THRESHOLD
-        val fatigueDeg  = (perclosValue * 100).toInt().coerceIn(0, 100)
+        val fatigueDeg   = (perclosValue * 100).toInt().coerceIn(0, 100)
 
-        // ----- Yawning (mouth contour) ---------------------------------------
+        // ----- Yawning (mouth contour) — spec §5.3 --------------------------
         val isYawning = detectYawning(face)
         if (isYawning && (now - lastYawnMs) > YAWN_COOLDOWN_MS) {
             lastYawnMs = now
-            Log.i(TAG, "Yawn detected")
+            recordYawn(now)
+            Log.i(TAG, "Yawn detected — count in 10 min: ${yawnCount()}")
+        }
+
+        // ----- Alarm level — spec §5.2 --------------------------------------
+        // Yawn count ≥ 3 in 10 min contributes to level 1 fatigue signal.
+        val yawnFatigue = yawnCount() >= YAWN_COUNT_THRESHOLD
+        val newLevel = when {
+            perclosValue >= PERCLOS_L2 -> 2          // > 50% → danger
+            perclosValue >= PERCLOS_L1 -> 1          // 35-50% → warning
+            yawnFatigue               -> 1           // yawn count threshold
+            else                      -> 0
         }
 
         // ----- Update shared alarm state ------------------------------------
         var flags = 0
-        if (isFatigued) flags = flags or 0x01   // bit 0: fatigue — used in 0x18 TLV
-        // bit 1 (phone use) and bit 2 (smoking) require custom TFLite model — Phase 4 stub
+        if (newLevel > 0) flags = flags or 0x01  // bit 0: fatigue
+        // bit 1 (phone) / bit 2 (smoking) require custom TFLite model
 
+        val prevLevel = alarmState.alarmLevel
         alarmState.behaviourFlags = flags
         alarmState.fatigueDegree  = fatigueDeg
+        updateAlarmLevel(newLevel, prevLevel)
 
-        Log.v(TAG, "PERCLOS=${(perclosValue * 100).toInt()}% fatigue=$isFatigued yawn=$isYawning")
+        Log.v(TAG, "PERCLOS=${fatigueDeg}% level=$newLevel yawns=${yawnCount()} eyesClosed=$eyesClosed")
     }
+
+    private fun updateAlarmLevel(newLevel: Int, prevLevel: Int) {
+        alarmState.alarmLevel = newLevel
+        // Fire callback only when first reaching danger (level 2) — triggers immediate 0x0200.
+        if (newLevel >= 2 && prevLevel < 2) {
+            onAlarmLevelChange?.invoke(newLevel)
+        }
+    }
+
+    private fun recordYawn(now: Long) {
+        yawnTimestamps.addLast(now)
+        val cutoff = now - YAWN_WINDOW_MS
+        while (yawnTimestamps.isNotEmpty() && yawnTimestamps.first() < cutoff) {
+            yawnTimestamps.removeFirst()
+        }
+    }
+
+    private fun yawnCount() = yawnTimestamps.size
 
     /**
      * Estimates mouth openness from UPPER_LIP_BOTTOM and LOWER_LIP_TOP contours.

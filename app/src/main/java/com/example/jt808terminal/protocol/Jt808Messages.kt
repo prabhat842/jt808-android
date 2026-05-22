@@ -4,16 +4,27 @@ import com.example.jt808terminal.core.TerminalConfig
 import java.util.Calendar
 import java.util.TimeZone
 
-// Message IDs — JT808-2013 Appendix B
+// Message IDs — JT808-2013 Appendix B / JT1078-2016 Appendix A
 object MsgId {
+    // Terminal → platform
     const val TERMINAL_GENERAL_RESPONSE = 0x0001
     const val HEARTBEAT               = 0x0002
     const val TERMINAL_REGISTER       = 0x0100
     const val TERMINAL_AUTH           = 0x0102
     const val LOCATION_REPORT         = 0x0200
+    const val MULTIMEDIA_EVENT_UPLOAD = 0x0800
+    const val MULTIMEDIA_DATA_UPLOAD  = 0x0801   // DMS snapshot JPEG
+
+    // JT1078 terminal → platform
+    const val UPLOAD_AV_ATTRIBUTES    = 0x1003   // reply to 0x9003
+    const val UPLOAD_RESOURCE_LIST    = 0x1205   // reply to 0x9205
+    const val FILE_UPLOAD_COMPLETE    = 0x1206   // notify after FTP done
+
+    // Platform → terminal
     const val PLATFORM_GENERAL_RESPONSE = 0x8001
     const val REGISTRATION_RESPONSE   = 0x8100
     const val PARAMETER_SETTING       = 0x8103
+    const val AV_ATTRIBUTES_QUERY     = 0x9003
     const val REALTIME_AV_REQUEST     = 0x9101
     const val AV_CONTROL              = 0x9102
     const val AV_STATUS_NOTIFY        = 0x9105
@@ -22,7 +33,12 @@ object MsgId {
     const val QUERY_RESOURCE_LIST     = 0x9205
     const val FILE_UPLOAD_CMD         = 0x9206
     const val FILE_UPLOAD_CONTROL     = 0x9207
-    const val AV_ATTRIBUTES_QUERY     = 0x9003
+    const val PTZ_CONTROL             = 0x9301
+    const val FOCUS_CONTROL           = 0x9302
+    const val APERTURE_CONTROL        = 0x9303
+    const val WIPER_CONTROL           = 0x9304
+    const val INFRARED_CONTROL        = 0x9305
+    const val ZOOM_CONTROL            = 0x9306
 }
 
 /**
@@ -141,6 +157,43 @@ object Jt808Messages {
 
         return out.toByteArray()
     }
+
+    // -- JT1078 terminal attribute upload (0x1003) -------------------------
+
+    /**
+     * 0x1003 Upload A/V Attributes body — JT/T 1078-2016 §5.4 Table 13.
+     *
+     * [0]   Audio input codec       BYTE  6=G.711A (Table 12)
+     * [1]   Audio channel count     BYTE  1=mono
+     * [2]   Sample rate             BYTE  0=8 kHz
+     * [3]   Sample bit depth        BYTE  1=16-bit
+     * [4-5] Audio frame length      WORD  160 samples = 20 ms
+     * [6]   Audio output supported  BYTE  1=yes (intercom capable)
+     * [7]   Video codec             BYTE  98=H.264 (Table 12)
+     * [8]   Video channel count     BYTE  1 (front camera only)
+     * [9]   Video reserved          BYTE  4
+     */
+    fun avAttributes(): ByteArray = byteArrayOf(
+        6,             // audio codec: G.711A — JT/T 1078-2016 Table 12
+        1,             // audio channels: mono
+        0,             // sample rate: 0 = 8 kHz
+        1,             // sample bits: 1 = 16-bit
+        0, 160.toByte(), // audio frame length WORD = 160 samples (20 ms)
+        1,             // audio output supported: 1 = yes
+        98.toByte(),   // video codec: H.264 — JT/T 1078-2016 Table 12
+        1,             // video channels
+        4,             // reserved
+    )
+
+    /**
+     * 0x1205 Resource list upload body — JT/T 1078-2016 §5.6.
+     * Sent in response to 0x9205; empty list when no local recordings exist.
+     *
+     * [0-1] Response seq  WORD  echoes the 0x9205 message serial number
+     * [2-5] File count    DWORD 0 = no files available
+     */
+    fun resourceListEmpty(responseSeq: Int): ByteArray =
+        word(responseSeq) + dword(0)
 
     // -- Additional info item builders for DMS/ADAS/BSD (Phase 4+) --------
 

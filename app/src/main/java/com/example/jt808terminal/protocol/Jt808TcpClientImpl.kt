@@ -163,6 +163,12 @@ class Jt808TcpClientImpl(
         send(LOCATION_REPORT, body)
     }
 
+    /** Send any authenticated terminal→platform message (e.g. 0x1003, 0x1205). */
+    fun sendCommand(msgId: Int, body: ByteArray) {
+        if (!authenticated) return
+        send(msgId, body)
+    }
+
     // --- Frame transmission ------------------------------------------------
 
     @Synchronized

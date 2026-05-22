@@ -16,5 +16,12 @@ class DmsAlarmState {
     // Whether a driver face is currently detected.
     @Volatile var faceDetected: Boolean = false
 
+    // Alarm severity per spec §5.2: 0=clear, 1=warning (PERCLOS 35-50%), 2=danger (>50%).
+    // Level 2 triggers an immediate 0x0200 report so the server auto-sends 0x9101.
+    @Volatile var alarmLevel: Int = 0
+
+    // Written by LocationReporter each cycle so DmsEngine can gate no-face check on speed.
+    @Volatile var currentSpeedKph: Float = 0f
+
     fun hasAlarm(): Boolean = behaviourFlags != 0
 }

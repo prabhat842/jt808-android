@@ -7,6 +7,8 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
 import android.util.Log
+import com.example.jt808terminal.adas.AdasAlarmState
+import com.example.jt808terminal.bsd.BsdAlarmState
 import com.example.jt808terminal.dms.DmsAlarmState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -33,6 +35,8 @@ class LocationReporter(
     private val scope: CoroutineScope,
     private val intervalMs: Long = 10_000L,
     private val dmsAlarmState: DmsAlarmState? = null,
+    private val adasAlarmState: AdasAlarmState? = null,
+    private val bsdAlarmState: BsdAlarmState? = null,
 ) {
     @Volatile private var latest: Location? = null
 
@@ -60,6 +64,11 @@ class LocationReporter(
                 report()
             }
         }
+    }
+
+    /** Sends an immediate 0x0200 outside the normal 10-s cycle — called on DMS danger alarm. */
+    fun reportNow() {
+        scope.launch { report() }
     }
 
     private fun report() {
@@ -91,19 +100,41 @@ class LocationReporter(
             }
         }
 
-        // DMS alarm sign bits — JT808-2013 §8.18 Table 24
+        // Share current speed with DmsEngine and AdasEngine for speed-gated checks.
+        dmsAlarmState?.currentSpeedKph  = speedKph.toFloat()
+        adasAlarmState?.currentSpeedKph = speedKph.toFloat()
+
+        // Alarm sign bits — JT808-2013 §8.18 Table 24
         var alarmFlags = 0L
         var extraItems = ByteArray(0)
+
+        // DMS alarms
         val dms = dmsAlarmState
         if (dms != null) {
             val flags = dms.behaviourFlags
             val deg   = dms.fatigueDegree
-            // Table 24 bit 14: Fatigue driving warning
+            // bit 14: Fatigue driving warning
             if ((flags and 0x01) != 0) alarmFlags = alarmFlags or (1L shl 14)
             if (flags != 0 || deg > 0) {
                 // Additional info 0x18: driving behaviour — JT808-2013 Table 27 / JT1078 extension
                 extraItems = Jt808Messages.additionalDrivingBehavior(flags, deg)
             }
+        }
+
+        // ADAS alarms — JT808-2013 Table 24
+        val adas = adasAlarmState
+        if (adas != null) {
+            if (adas.overSpeedAlarm)   alarmFlags = alarmFlags or (1L shl 1)   // bit 1: Over speed alarm
+            if (adas.pedestrianRisk || adas.ldwActive)
+                                       alarmFlags = alarmFlags or (1L shl 3)   // bit 3: Risk warning
+            if (adas.overSpeedWarning) alarmFlags = alarmFlags or (1L shl 13)  // bit 13: Over speed warning
+            if (adas.fcwActive)        alarmFlags = alarmFlags or (1L shl 29)  // bit 29: Collision warning
+        }
+
+        // BSD alarms — JT808-2013 Table 24 bit 29 (Collision warning)
+        val bsd = bsdAlarmState
+        if (bsd != null && bsd.hasAlarm()) {
+            alarmFlags = alarmFlags or (1L shl 29)  // bit 29: Collision warning
         }
 
         val body = Jt808Messages.locationReport(

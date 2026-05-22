@@ -52,4 +52,6 @@ dependencies {
     implementation("androidx.camera:camera-view:1.3.4")
     // ML Kit Face Detection — Phase 4 DMS (PERCLOS, yawning)
     implementation("com.google.mlkit:face-detection:16.1.7")
+    // ML Kit Object Detection — Phase 5 ADAS (FCW, LDW, pedestrian) + Phase 6 BSD
+    implementation("com.google.mlkit:object-detection:17.0.2")
 }
