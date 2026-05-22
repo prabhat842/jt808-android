@@ -13,9 +13,12 @@ import com.example.jt808terminal.protocol.MsgId.TERMINAL_REGISTER
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.OutputStream
+import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -43,6 +46,19 @@ class Jt808TcpClientImpl(
 
     private val seqGen = AtomicInteger(0)
 
+    /**
+     * Configurable heartbeat interval — JT808-2013 §8.9 Table 12 param 0x0001 (seconds).
+     * Updated live by 0x8103 handler; next heartbeat fires after current delay completes.
+     */
+    @Volatile var heartbeatIntervalMs: Long = 30_000L
+
+    /**
+     * CONFLATED channel: sending to this channel interrupts the backoff delay and
+     * triggers an immediate reconnect attempt.  Used by forceReconnect() and
+     * the network-available callback.
+     */
+    private val reconnectSignal = Channel<Unit>(Channel.CONFLATED)
+
     /** Invoked on the caller's scope for every inbound platform command after authentication. */
     var onCommand: ((frame: DecodedFrame) -> Unit)? = null
 
@@ -53,6 +69,16 @@ class Jt808TcpClientImpl(
     override fun isConnected(): Boolean = socket?.let { !it.isClosed && it.isConnected } == true
 
     fun isAuthenticated() = authenticated
+
+    /**
+     * Closes the current socket (interrupts the blocking read) and signals the reconnect
+     * channel so a pending backoff delay exits immediately.
+     * Called by the NetworkMonitor when connectivity is restored.
+     */
+    fun forceReconnect() {
+        socket?.close()
+        reconnectSignal.trySend(Unit)
+    }
 
     // --- Lifecycle ---
 
@@ -68,22 +94,37 @@ class Jt808TcpClientImpl(
                 connectAndRun()
                 backoffMs = 1_000L
             } catch (e: CancellationException) {
-                throw e  // coroutines rely on CancellationException propagating
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "JT808 disconnected: ${e.message}")
             }
             authenticated = false
             socket = null
             output = null
-            delay(backoffMs)  // throws CancellationException when scope is cancelled
+            // Sleep for backoff OR exit early if forceReconnect() fires — whichever is first.
+            withTimeoutOrNull(backoffMs) { reconnectSignal.receive() }
             backoffMs = minOf(backoffMs * 2, 60_000L)
         }
     }
 
-    // Blocking: runs on Dispatchers.IO until the socket closes.
+    /**
+     * Blocking: runs on Dispatchers.IO until the socket closes or times out.
+     *
+     * Socket hardening — Phase 8:
+     *   SO_KEEPALIVE  true    — OS sends keepalive probes on idle TCP connections
+     *   TCP_NODELAY   true    — sends small control frames immediately (no Nagle buffering)
+     *   SO_TIMEOUT    90 000  — unblocks the read loop after 3 missed heartbeat intervals,
+     *                           which triggers the connectLoop backoff and reconnect
+     *   connect timeout 15 s  — fails fast if server is unreachable
+     */
     private fun connectAndRun() {
         Log.i(TAG, "Connecting to ${config.serverHost}:${config.serverPort}")
-        val sock = Socket(config.serverHost, config.serverPort)
+        val sock = Socket().apply {
+            keepAlive  = true
+            tcpNoDelay = true
+            soTimeout  = 90_000   // 3 × default 30-s heartbeat interval
+            connect(InetSocketAddress(config.serverHost, config.serverPort), 15_000)
+        }
         socket = sock
         output = sock.getOutputStream()
         Log.i(TAG, "TCP connected")
@@ -147,11 +188,10 @@ class Jt808TcpClientImpl(
         }
     }
 
-    // Heartbeat every 30 s — JT808-2013 §5.2
-    // Uses while(true): delay() throws CancellationException when the scope is cancelled.
+    // Heartbeat — JT808-2013 §5.2. Interval configurable via 0x8103 param 0x0001.
     private suspend fun heartbeatLoop() {
         while (true) {
-            delay(30_000L)
+            delay(heartbeatIntervalMs)
             if (authenticated) send(HEARTBEAT, Jt808Messages.heartbeat())
         }
     }

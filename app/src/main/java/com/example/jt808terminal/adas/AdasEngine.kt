@@ -185,9 +185,10 @@ class AdasEngine(
         }
 
         // Speed-based alarms — purely GPS, no vision needed.
+        // Thresholds are server-configurable via 0x8103 params 0x0055/0x005B.
         val speed         = alarmState.currentSpeedKph
-        val overSpeedWarn = speed >= OVERSPEED_WARNING_KPH
-        val overSpeedAlarm = speed >= OVERSPEED_ALARM_KPH
+        val overSpeedWarn  = speed >= alarmState.overSpeedWarningKph
+        val overSpeedAlarm = speed >= alarmState.overSpeedAlarmKph
 
         val prevFcw = alarmState.fcwActive
         alarmState.fcwActive        = fcw

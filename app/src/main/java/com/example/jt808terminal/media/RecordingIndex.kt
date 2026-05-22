@@ -78,6 +78,11 @@ class RecordingIndex(context: Context) {
     @Synchronized
     fun findById(id: Long): RecordingEntry? = entries.firstOrNull { it.id == id }
 
+    @Synchronized
+    fun remove(id: Long) {
+        if (entries.removeIf { it.id == id }) save()
+    }
+
     // -- Persistence ---------------------------------------------------------
 
     private fun save() {

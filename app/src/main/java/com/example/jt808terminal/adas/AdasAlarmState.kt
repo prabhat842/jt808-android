@@ -19,6 +19,11 @@ class AdasAlarmState {
     // Written by LocationReporter each cycle so AdasEngine can gate speed-only alarms.
     @Volatile var currentSpeedKph: Float = 0f
 
+    // Server-configured thresholds — updated live from 0x8103 param 0x0055/0x005B.
+    // AdasEngine reads these on every frame so changes take effect immediately.
+    @Volatile var overSpeedAlarmKph: Float = 100f
+    @Volatile var overSpeedWarningKph: Float = 80f
+
     fun hasAlarm(): Boolean =
         fcwActive || pedestrianRisk || ldwActive || overSpeedWarning || overSpeedAlarm
 }

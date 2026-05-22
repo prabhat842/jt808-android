@@ -3,7 +3,13 @@ package com.example.jt808terminal.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ComponentCallbacks2
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -31,6 +37,7 @@ import com.example.jt808terminal.jt1078.VideoEncoder
 import com.example.jt808terminal.media.FtpUploader
 import com.example.jt808terminal.media.PlaybackSession
 import com.example.jt808terminal.media.RecordingIndex
+import com.example.jt808terminal.media.StorageManager
 import com.example.jt808terminal.media.VideoRecorder
 import com.example.jt808terminal.protocol.Jt808Messages
 import com.example.jt808terminal.protocol.Jt808TcpClientImpl
@@ -81,6 +88,17 @@ class TerminalService : LifecycleService() {
     private lateinit var adasEngine: AdasEngine
     @Volatile private var adasImageAnalysis: ImageAnalysis? = null
 
+    // Network connectivity callback — triggers JT808 reconnect when network returns (Phase 8).
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            Log.i(TAG, "Network available — forcing JT808 reconnect")
+            jt808Client.forceReconnect()
+        }
+        override fun onLost(network: Network) {
+            Log.w(TAG, "Network lost")
+        }
+    }
+
     // Phase 7 — recording, playback, file upload
     private lateinit var recordingIndex: RecordingIndex
     private lateinit var videoRecorder: VideoRecorder
@@ -126,12 +144,32 @@ class TerminalService : LifecycleService() {
             handlePlatformCommand(frame.msgId, frame.seqNum, frame.body)
         }
 
+        // Restore server-configured parameters persisted by previous 0x8103 messages.
+        val settings = AppSettings(this)
+        jt808Client.heartbeatIntervalMs        = settings.heartbeatIntervalSec.toLong() * 1000L
+        adasAlarmState.overSpeedAlarmKph       = settings.overSpeedAlarmKph.toFloat()
+        adasAlarmState.overSpeedWarningKph     = (settings.overSpeedAlarmKph - settings.overSpeedWarningGapTenthKph / 10f).coerceAtLeast(1f)
+        val locationIntervalMs                 = settings.locationReportIntervalSec.toLong() * 1000L
+
         locationReporter = LocationReporter(
             this, jt808Client, scope,
+            intervalMs     = locationIntervalMs,
             dmsAlarmState  = dmsAlarmState,
             adasAlarmState = adasAlarmState,
             bsdAlarmState  = bsdAlarmState,
         )
+
+        // Network connectivity monitoring — reconnect promptly on network restore (Phase 8).
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val req = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        cm.registerNetworkCallback(req, networkCallback)
+
+        // Evict old recordings on startup to reclaim storage (Phase 8).
+        scope.launch(Dispatchers.IO) {
+            StorageManager.evict(recordingIndex, AppSettings(this@TerminalService).maxStorageMb)
+        }
 
         // DMS danger alarm → immediate 0x0200 so server auto-triggers 0x9101 — spec §5.2
         dmsEngine.onAlarmLevelChange = { level ->
@@ -158,6 +196,8 @@ class TerminalService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
+            .unregisterNetworkCallback(networkCallback)
         stopStreaming()
         activePlayback?.stop(); activePlayback = null
         activeFtpUploader?.isCancelled = true; activeFtpUploader = null
@@ -230,7 +270,7 @@ class TerminalService : LifecycleService() {
             MsgId.REALTIME_AV_REQUEST -> handle9101(body)
             MsgId.AV_CONTROL          -> handle9102(body)
             MsgId.AV_STATUS_NOTIFY    -> {}   // packet-loss feedback — Phase 8
-            MsgId.PARAMETER_SETTING   -> Log.i(TAG, "0x8103 params (${body.size}B) — Phase 8")
+            MsgId.PARAMETER_SETTING   -> handle8103(body)
             // 0x9003 — Query A/V attributes: reply with 0x1003 (codec, sample rate, channels)
             MsgId.AV_ATTRIBUTES_QUERY -> {
                 jt808Client.sendCommand(MsgId.UPLOAD_AV_ATTRIBUTES, Jt808Messages.avAttributes())
@@ -499,6 +539,93 @@ class TerminalService : LifecycleService() {
         mgr.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Terminal", NotificationManager.IMPORTANCE_LOW)
         )
+    }
+
+    // ---- Phase 8: 0x8103 parameter setting -----------------------------------
+
+    /**
+     * 0x8103 Terminal parameter setting — JT808-2013 §8.9 Table 10/11/12.
+     *
+     * Body: [0]=count(BYTE) + N×{ paramId(DWORD) + paramLen(BYTE) + value(BYTE[n]) }
+     *
+     * Parameters handled:
+     *   0x0001  DWORD  Heartbeat interval (seconds)      → jt808Client.heartbeatIntervalMs
+     *   0x0029  DWORD  Location report interval (seconds) → locationReporter.intervalMs
+     *   0x0055  DWORD  Overspeed alarm threshold (km/h)   → adasAlarmState.overSpeedAlarmKph
+     *   0x005B  WORD   Alarm-warning gap (1/10 km/h)      → adasAlarmState.overSpeedWarningKph
+     */
+    private fun handle8103(body: ByteArray) {
+        if (body.isEmpty()) return
+        val count = body[0].toInt() and 0xFF
+        var pos = 1
+        val s = AppSettings(this)
+        repeat(count) {
+            if (pos + 5 > body.size) return@repeat
+            val paramId  = u32be(body, pos); pos += 4
+            val paramLen = body[pos++].toInt() and 0xFF
+            if (pos + paramLen > body.size) return@repeat
+            val value = body.copyOfRange(pos, pos + paramLen); pos += paramLen
+            when (paramId) {
+                0x0001 -> {   // Heartbeat interval — JT808-2013 Table 12
+                    val secs = u32be(value, 0).toLong().coerceAtLeast(5)
+                    jt808Client.heartbeatIntervalMs = secs * 1_000L
+                    // Update SO_TIMEOUT to cover 3 heartbeat intervals (takes effect on next connect)
+                    s.heartbeatIntervalSec = secs.toInt()
+                    Log.i(TAG, "0x8103: heartbeat interval → ${secs}s")
+                }
+                0x0029 -> {   // Location report interval — JT808-2013 Table 12
+                    val secs = u32be(value, 0).toLong().coerceAtLeast(1)
+                    locationReporter.intervalMs = secs * 1_000L
+                    s.locationReportIntervalSec = secs.toInt()
+                    Log.i(TAG, "0x8103: location interval → ${secs}s")
+                }
+                0x0055 -> {   // Highest (alarm) speed in km/h — JT808-2013 Table 12
+                    val kph = u32be(value, 0).toFloat().coerceAtLeast(1f)
+                    adasAlarmState.overSpeedAlarmKph = kph
+                    s.overSpeedAlarmKph = kph.toInt()
+                    val gapKph = s.overSpeedWarningGapTenthKph / 10f
+                    adasAlarmState.overSpeedWarningKph = (kph - gapKph).coerceAtLeast(1f)
+                    Log.i(TAG, "0x8103: overspeed alarm → ${kph}km/h warning → ${adasAlarmState.overSpeedWarningKph}km/h")
+                }
+                0x005B -> {   // Alarm-warning gap in 1/10 km/h — JT808-2013 Table 12
+                    if (value.size >= 2) {
+                        val gapTenth = ((value[0].toInt() and 0xFF) shl 8) or (value[1].toInt() and 0xFF)
+                        val gapKph   = gapTenth / 10f
+                        s.overSpeedWarningGapTenthKph = gapTenth
+                        adasAlarmState.overSpeedWarningKph = (adasAlarmState.overSpeedAlarmKph - gapKph).coerceAtLeast(1f)
+                        Log.i(TAG, "0x8103: overspeed gap → ${gapKph}km/h → warning ${adasAlarmState.overSpeedWarningKph}km/h")
+                    }
+                }
+                else -> Log.d(TAG, "0x8103: unhandled param 0x${paramId.toString(16).uppercase()}")
+            }
+        }
+    }
+
+    // ---- Phase 8: memory pressure --------------------------------------------
+
+    /**
+     * Android calls this on the foreground service when the system is running low.
+     *
+     * RUNNING_CRITICAL: cancel any active FTP upload (non-safety, IO-intensive).
+     * Lower levels: no action — DMS/ADAS are safety-critical and must continue running.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+            Log.w(TAG, "onTrimMemory level=$level — cancelling FTP upload to reclaim memory")
+            activeFtpUploader?.isCancelled = true
+            activeFtpUploader = null
+        }
+    }
+
+    // ---- Helpers -------------------------------------------------------------
+
+    private fun u32be(buf: ByteArray, offset: Int): Int {
+        if (offset + 3 >= buf.size) return 0
+        return ((buf[offset].toInt() and 0xFF) shl 24) or
+               ((buf[offset + 1].toInt() and 0xFF) shl 16) or
+               ((buf[offset + 2].toInt() and 0xFF) shl 8) or
+               (buf[offset + 3].toInt() and 0xFF)
     }
 
     companion object {

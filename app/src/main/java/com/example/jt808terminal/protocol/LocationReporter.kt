@@ -33,7 +33,7 @@ class LocationReporter(
     private val context: Context,
     private val client: Jt808TcpClientImpl,
     private val scope: CoroutineScope,
-    private val intervalMs: Long = 10_000L,
+    @Volatile var intervalMs: Long = 10_000L,
     private val dmsAlarmState: DmsAlarmState? = null,
     private val adasAlarmState: AdasAlarmState? = null,
     private val bsdAlarmState: BsdAlarmState? = null,

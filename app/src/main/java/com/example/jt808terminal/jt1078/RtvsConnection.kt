@@ -40,7 +40,7 @@ class RtvsConnection(
         connectJob = scope.launch(Dispatchers.IO) {
             try {
                 Log.i(TAG, "Connecting to RTVS $host:$port ch=$channel")
-                val sock = Socket(host, port)
+                val sock = Socket(host, port).apply { keepAlive = true }
                 socket = sock
                 output = sock.getOutputStream()
                 connected = true
