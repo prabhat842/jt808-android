@@ -92,22 +92,33 @@ object Jt808Codec {
     /**
      * Decodes the raw bytes between 0x7E delimiters.
      * Returns null if checksum fails or frame is malformed.
+     *
+     * Header formats (JT808-2013 §4.4.3 Table 2):
+     *   Standard (bit 14 of bodyProps = 0):  12 bytes — phone BCD[6], seqNum at offset 10
+     *   Versioned (bit 14 of bodyProps = 1):  17 bytes — version(1) + phone BCD[10] + seqNum at 15
+     *
+     * The JT808-2019 extended header is indicated by bodyProps bit 14 = 1.
+     * Wire-verified: server sends 17-byte headers; our uplink uses standard 12-byte headers.
      */
     fun decodeFrame(raw: ByteArray): DecodedFrame? {
         val bytes = unescape(raw)
-        if (bytes.size < 13) return null  // 12 header + 1 checksum minimum
+        if (bytes.size < 13) return null
 
         val expected = bytes.dropLast(1).fold(0) { acc, b -> acc xor (b.toInt() and 0xFF) } and 0xFF
         if (expected != (bytes.last().toInt() and 0xFF)) return null
 
-        val msgId = u16(bytes, 0)
+        val msgId    = u16(bytes, 0)
         val bodyProps = u16(bytes, 2)
-        val bodyLen = bodyProps and 0x03FF
-        val hasSubPkg = (bodyProps and 0x2000) != 0
-        val seqNum = u16(bytes, 10)
-        val bodyStart = if (hasSubPkg) 16 else 12
-        if (bytes.size < bodyStart + bodyLen + 1) return null
+        val bodyLen  = bodyProps and 0x03FF
+        val hasSubPkg   = (bodyProps and 0x2000) != 0
+        // Bit 14 = JT808-2019 versioned header: 1 version byte + 10-byte phone instead of 6-byte
+        val isVersioned = (bodyProps and 0x4000) != 0
 
+        val headerSize = if (isVersioned) 17 else 12   // seqNum always at last 2 bytes of header
+        val seqNum    = u16(bytes, headerSize - 2)
+        val bodyStart = headerSize + if (hasSubPkg) 4 else 0
+
+        if (bytes.size < bodyStart + bodyLen + 1) return null
         return DecodedFrame(msgId, seqNum, bytes.copyOfRange(bodyStart, bodyStart + bodyLen))
     }
 
