@@ -24,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Foreground service hosting all vehicle terminal subsystems.
@@ -63,7 +64,9 @@ class TerminalService : LifecycleService() {
 
         dmsAlarmState = DmsAlarmState()
         dmsEngine = DmsEngine(dmsAlarmState)
-        dmsImageAnalysis = dmsEngine.getImageAnalysis()
+        // Init ML Kit off the main thread — FaceDetection.getClient() loads the TFLite runtime.
+        // dmsImageAnalysis is null-checked before use in startStreaming(), so the race is safe.
+        scope.launch(Dispatchers.IO) { dmsImageAnalysis = dmsEngine.getImageAnalysis() }
 
         jt808Client = Jt808TcpClientImpl(config, scope)
         jt808Client.onCommand = { frame ->
