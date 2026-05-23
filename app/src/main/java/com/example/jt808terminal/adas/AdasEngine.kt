@@ -94,7 +94,6 @@ class AdasEngine(
                 .setDetectorMode(ObjectDetectorOptions.STREAM_MODE)
                 .enableMultipleObjects()
                 .enableClassification()
-                .setMaxPerObjectLabelCount(1)
                 .build()
         )
 
