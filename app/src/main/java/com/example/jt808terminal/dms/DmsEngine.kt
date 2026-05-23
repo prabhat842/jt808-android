@@ -38,6 +38,8 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
     private val handlerThread = HandlerThread("dms-analysis")
     private var detector: FaceDetector? = null
     private val perclos = PerclosTracker(windowMs = 60_000L)
+    // Created once after handlerThread.start(); reused for all ML Kit callbacks.
+    private lateinit var dmsExecutor: java.util.concurrent.Executor
 
     // HandlerThread-affine state (only touched from the DMS HandlerThread)
     private var lastYawnMs = 0L
@@ -74,13 +76,16 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
      */
     fun getImageAnalysis(): ImageAnalysis {
         handlerThread.start()
+        val handler = Handler(handlerThread.looper)
+        dmsExecutor = java.util.concurrent.Executor { cmd -> handler.post(cmd) }
 
-        // FAST mode: single JNI thread vs ACCURATE's 6-thread pool.
+        // ACCURATE mode: single persistent interpreter — avoids XNNPack delegate
+        // re-initialization that occurs each frame with FAST mode's thread pool.
         // CONTOUR_MODE_NONE + LANDMARK_MODE_ALL: landmarks include NOSE_BASE + BOTTOM_MOUTH
         // for yawn detection — cheaper than full contours, sufficient accuracy.
         detector = FaceDetection.getClient(
             FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                 .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                 .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
@@ -88,16 +93,12 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
                 .build()
         )
 
-        val executor = java.util.concurrent.Executor { cmd ->
-            Handler(handlerThread.looper).post(cmd)
-        }
-
         val analysis = ImageAnalysis.Builder()
             .setTargetResolution(Size(320, 240))
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
 
-        analysis.setAnalyzer(executor) { proxy -> processProxy(proxy) }
+        analysis.setAnalyzer(dmsExecutor) { proxy -> processProxy(proxy) }
         Log.i(TAG, "ImageAnalysis use case ready")
         return analysis
     }
@@ -122,13 +123,9 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
         val det = detector
         if (det == null) { proxy.close(); return }
 
-        val handlerExecutor = java.util.concurrent.Executor { cmd ->
-            Handler(handlerThread.looper).post(cmd)
-        }
-
         det.process(image)
-            .addOnSuccessListener(handlerExecutor) { faces -> onFaces(faces) }
-            .addOnFailureListener(handlerExecutor) { e ->
+            .addOnSuccessListener(dmsExecutor) { faces -> onFaces(faces) }
+            .addOnFailureListener(dmsExecutor) { e ->
                 Log.w(TAG, "Face detection failed: ${e.message}")
             }
             .addOnCompleteListener { proxy.close() }  // always release — any thread is fine
