@@ -2,265 +2,172 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121212"
+    android:background="@color/goatai_bg"
     android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:paddingHorizontal="20dp">
 
-        <!-- Toolbar row -->
+        <!-- ── Toolbar ────────────────────────────────────────────── -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingTop="16dp"
-            android:paddingBottom="24dp">
+            android:paddingTop="20dp"
+            android:paddingBottom="28dp">
 
             <TextView
                 android:id="@+id/btnBack"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="←"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/goatai_fg"
                 android:textSize="22sp"
                 android:paddingEnd="16dp"
                 android:clickable="true"
                 android:focusable="true" />
 
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
                 android:text="Settings"
-                android:textColor="#FFFFFF"
-                android:textSize="22sp"
-                android:textStyle="bold" />
+                android:textColor="@color/goatai_fg_strong"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-medium" />
         </LinearLayout>
 
-        <!-- JT808 Server -->
+        <!-- ── JT808 Server ──────────────────────────────────────── -->
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="JT808 SERVER"
-            android:textColor="#888888"
-            android:textSize="11sp"
-            android:letterSpacing="0.12"
-            android:layout_marginBottom="8dp" />
+            style="@style/SettingsSectionLabel"
+            android:text="JT808 SIGNALLING SERVER" />
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#1E1E1E"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="16dp">
+        <LinearLayout style="@style/SettingsCard">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Host / IP"
-                android:textColor="#888888"
-                android:textSize="12sp" />
+            <TextView style="@style/SettingsFieldLabel" android:text="Host / IP Address" />
             <EditText
                 android:id="@+id/etJt808Host"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                style="@style/SettingsEditText"
                 android:inputType="textUri"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#555555"
-                android:hint="e.g. 192.168.1.10"
-                android:background="@null"
-                android:paddingTop="6dp"
-                android:paddingBottom="8dp"
-                android:textSize="16sp"
-                android:fontFamily="monospace" />
+                android:hint="e.g. 192.168.1.10" />
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#333333"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="12dp" />
+            <View style="@style/SettingsDivider" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Port"
-                android:textColor="#888888"
-                android:textSize="12sp" />
+            <TextView style="@style/SettingsFieldLabel" android:text="TCP Port" />
             <EditText
                 android:id="@+id/etJt808Port"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                style="@style/SettingsEditText"
                 android:inputType="number"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#555555"
-                android:hint="6808"
-                android:background="@null"
-                android:paddingTop="6dp"
-                android:paddingBottom="4dp"
-                android:textSize="16sp"
-                android:fontFamily="monospace" />
+                android:hint="6808" />
         </LinearLayout>
 
-        <!-- RTVS Server -->
+        <!-- ── RTVS / JT1078 Server ──────────────────────────────── -->
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="RTVS / JT1078 SERVER"
-            android:textColor="#888888"
-            android:textSize="11sp"
-            android:letterSpacing="0.12"
-            android:layout_marginBottom="8dp" />
+            style="@style/SettingsSectionLabel"
+            android:text="RTVS / JT1078 MEDIA SERVER" />
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#1E1E1E"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="16dp">
+        <LinearLayout style="@style/SettingsCard">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Host / IP"
-                android:textColor="#888888"
-                android:textSize="12sp" />
+            <TextView style="@style/SettingsFieldLabel" android:text="Host / IP Address" />
             <EditText
                 android:id="@+id/etRtvsHost"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                style="@style/SettingsEditText"
                 android:inputType="textUri"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#555555"
-                android:hint="e.g. 192.168.1.10"
-                android:background="@null"
-                android:paddingTop="6dp"
-                android:paddingBottom="8dp"
-                android:textSize="16sp"
-                android:fontFamily="monospace" />
+                android:hint="e.g. 192.168.1.10" />
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#333333"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="12dp" />
+            <View style="@style/SettingsDivider" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Port"
-                android:textColor="#888888"
-                android:textSize="12sp" />
+            <TextView style="@style/SettingsFieldLabel" android:text="TCP Port" />
             <EditText
                 android:id="@+id/etRtvsPort"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                style="@style/SettingsEditText"
                 android:inputType="number"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#555555"
-                android:hint="6600"
-                android:background="@null"
-                android:paddingTop="6dp"
-                android:paddingBottom="4dp"
-                android:textSize="16sp"
-                android:fontFamily="monospace" />
+                android:hint="6600" />
         </LinearLayout>
 
-        <!-- Terminal Identity -->
+        <!-- ── Terminal Identity ─────────────────────────────────── -->
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="TERMINAL IDENTITY"
-            android:textColor="#888888"
-            android:textSize="11sp"
-            android:letterSpacing="0.12"
-            android:layout_marginBottom="8dp" />
+            style="@style/SettingsSectionLabel"
+            android:text="TERMINAL IDENTITY" />
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#1E1E1E"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="24dp">
+        <LinearLayout style="@style/SettingsCard">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="SIM Phone Number (12 digits)"
-                android:textColor="#888888"
-                android:textSize="12sp" />
+            <TextView style="@style/SettingsFieldLabel" android:text="SIM Phone Number  (12 digits)" />
             <EditText
                 android:id="@+id/etPhone"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                style="@style/SettingsEditText"
                 android:inputType="phone"
                 android:maxLength="12"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#555555"
-                android:hint="000000000001"
-                android:background="@null"
-                android:paddingTop="6dp"
-                android:paddingBottom="8dp"
-                android:textSize="16sp"
-                android:fontFamily="monospace" />
+                android:hint="000000000001" />
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#333333"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="12dp" />
+            <View style="@style/SettingsDivider" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Terminal ID (max 7 chars)"
-                android:textColor="#888888"
-                android:textSize="12sp" />
+            <TextView style="@style/SettingsFieldLabel" android:text="Terminal ID  (max 7 chars)" />
             <EditText
                 android:id="@+id/etTerminalId"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                style="@style/SettingsEditText"
                 android:inputType="text"
                 android:maxLength="7"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#555555"
-                android:hint="GOATAI1"
-                android:background="@null"
-                android:paddingTop="6dp"
-                android:paddingBottom="4dp"
-                android:textSize="16sp"
+                android:hint="GOATAI1" />
+        </LinearLayout>
+
+        <!-- ── Vehicle Registration ──────────────────────────────── -->
+        <TextView
+            style="@style/SettingsSectionLabel"
+            android:text="VEHICLE REGISTRATION" />
+
+        <LinearLayout style="@style/SettingsCard" android:layout_marginBottom="28dp">
+
+            <TextView style="@style/SettingsFieldLabel"
+                android:text="VIN / License Plate  (used in 0x0100 registration)" />
+            <EditText
+                android:id="@+id/etVin"
+                style="@style/SettingsEditText"
+                android:inputType="textCapCharacters"
+                android:maxLength="17"
+                android:hint="GOATAI0000000001" />
+
+            <View style="@style/SettingsDivider" />
+
+            <!-- Informational note — plate colour is 0 (unregistered) until overridden via 0x8103 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="8dp"
+                android:text="Plate colour: 0 (unregistered) — configurable via 0x8103 param 0x0084"
+                android:textColor="@color/goatai_muted"
+                android:textSize="11sp"
                 android:fontFamily="monospace" />
         </LinearLayout>
 
-        <!-- Save button -->
+        <!-- ── Save button ───────────────────────────────────────── -->
         <TextView
             android:id="@+id/btnSave"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:background="#4CAF50"
+            android:background="@drawable/btn_save"
             android:gravity="center"
             android:text="SAVE AND RESTART"
-            android:textColor="#FFFFFF"
-            android:textSize="15sp"
+            android:textColor="@color/goatai_fg_strong"
+            android:textSize="13sp"
             android:textStyle="bold"
-            android:letterSpacing="0.05"
+            android:letterSpacing="0.08"
             android:clickable="true"
-            android:focusable="true" />
+            android:focusable="true"
+            android:layout_marginBottom="12dp" />
 
         <TextView
             android:id="@+id/tvError"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:textColor="#F44336"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="24dp"
+            android:textColor="@color/goatai_warn"
             android:textSize="13sp"
             android:visibility="gone" />
 

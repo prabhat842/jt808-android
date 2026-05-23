@@ -20,6 +20,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var etRtvsPort: EditText
     private lateinit var etPhone: EditText
     private lateinit var etTerminalId: EditText
+    private lateinit var etVin: EditText
     private lateinit var tvError: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -34,6 +35,7 @@ class SettingsActivity : AppCompatActivity() {
         etRtvsPort   = findViewById(R.id.etRtvsPort)
         etPhone      = findViewById(R.id.etPhone)
         etTerminalId = findViewById(R.id.etTerminalId)
+        etVin        = findViewById(R.id.etVin)
         tvError      = findViewById(R.id.tvError)
 
         loadCurrent()
@@ -49,6 +51,7 @@ class SettingsActivity : AppCompatActivity() {
         etRtvsPort.setText(settings.rtvsPort.toString())
         etPhone.setText(settings.phoneNumber)
         etTerminalId.setText(settings.terminalId)
+        etVin.setText(settings.vin)
     }
 
     private fun save() {
@@ -58,11 +61,13 @@ class SettingsActivity : AppCompatActivity() {
         val rtvsPortS  = etRtvsPort.text.toString().trim()
         val phone      = etPhone.text.toString().trim()
         val termId     = etTerminalId.text.toString().trim()
+        val vin        = etVin.text.toString().trim().uppercase()
 
         if (jt808Host.isBlank()) { showError("JT808 host is required"); return }
         if (rtvsHost.isBlank())  { showError("RTVS host is required"); return }
         if (phone.length != 12)  { showError("Phone number must be exactly 12 digits"); return }
         if (termId.isBlank())    { showError("Terminal ID is required"); return }
+        if (vin.isBlank())       { showError("VIN is required"); return }
 
         val jt808Port = jt808PortS.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: run { showError("JT808 port must be 1–65535"); return }
@@ -75,6 +80,7 @@ class SettingsActivity : AppCompatActivity() {
         settings.rtvsPort    = rtvsPort
         settings.phoneNumber = phone
         settings.terminalId  = termId
+        settings.vin         = vin
 
         // Stop and restart the service so it picks up the new config
         stopService(Intent(this, TerminalService::class.java))

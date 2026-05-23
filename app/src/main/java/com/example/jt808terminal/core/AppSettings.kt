@@ -31,6 +31,28 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_TERMINAL_ID, "GOATAI01") ?: "GOATAI01"
         set(v) { prefs.edit().putString(KEY_TERMINAL_ID, v.trim()).apply() }
 
+    // --- Vehicle registration fields (sent in 0x0100) ---
+
+    /** 17-char VIN — JT808-2013 §8.5 Table 7: used as license plate when plateColor=0. */
+    var vin: String
+        get() = prefs.getString(KEY_VIN, "GOATAI0000000001") ?: "GOATAI0000000001"
+        set(v) { prefs.edit().putString(KEY_VIN, v.trim().uppercase()).apply() }
+
+    /** License plate color per JT/T 415-2006: 0=unregistered, 1=blue, 2=yellow, 3=black, 4=white */
+    var plateColor: Int
+        get() = prefs.getInt(KEY_PLATE_COLOR, 0)
+        set(v) { prefs.edit().putInt(KEY_PLATE_COLOR, v.coerceIn(0, 9)).apply() }
+
+    /** 5-char manufacturer ID sent in 0x0100 registration. */
+    var manufacturerId: String
+        get() = prefs.getString(KEY_MANUFACTURER_ID, "GOATA") ?: "GOATA"
+        set(v) { prefs.edit().putString(KEY_MANUFACTURER_ID, v.trim().uppercase().take(5)).apply() }
+
+    /** Up-to-20-char terminal model string sent in 0x0100 registration. */
+    var terminalModel: String
+        get() = prefs.getString(KEY_TERMINAL_MODEL, "AndroidV1") ?: "AndroidV1"
+        set(v) { prefs.edit().putString(KEY_TERMINAL_MODEL, v.trim().take(20)).apply() }
+
     // --- Server-configured parameters (updated via 0x8103) ---
 
     /** 0x8103 param 0x0001 — Terminal heartbeat interval (seconds). */
@@ -67,6 +89,10 @@ class AppSettings(context: Context) {
         private const val KEY_RTVS_PORT           = "rtvs_port"
         private const val KEY_PHONE               = "phone_number"
         private const val KEY_TERMINAL_ID         = "terminal_id"
+        private const val KEY_VIN                 = "vin"
+        private const val KEY_PLATE_COLOR         = "plate_color"
+        private const val KEY_MANUFACTURER_ID     = "manufacturer_id"
+        private const val KEY_TERMINAL_MODEL      = "terminal_model"
         private const val KEY_HEARTBEAT_INTERVAL  = "heartbeat_interval_sec"
         private const val KEY_LOCATION_INTERVAL   = "location_interval_sec"
         private const val KEY_OVERSPEED_ALARM_KPH = "overspeed_alarm_kph"

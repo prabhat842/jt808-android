@@ -21,8 +21,12 @@
     <color name="goatai_muted">#93a1ad</color>
     <color name="goatai_muted_strong">#b0bcc7</color>
 
-    <!-- Borders -->
+    <!-- Borders / dividers -->
     <color name="goatai_border">#1f2e3a</color>
+    <color name="goatai_divider">#1a2a35</color>
+
+    <!-- Pressed-state dims -->
+    <color name="goatai_electric_dim">#17a3bb</color>
 
     <!-- Status -->
     <color name="goatai_ok">#4ade80</color>

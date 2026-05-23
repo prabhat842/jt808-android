@@ -520,12 +520,16 @@ class TerminalService : LifecycleService() {
     private fun buildConfig(): TerminalConfig {
         val s = AppSettings(this)
         return TerminalConfig(
-            phoneNumber = s.phoneNumber,
-            terminalId  = s.terminalId,
-            serverHost  = s.jt808Host,
-            serverPort  = s.jt808Port,
-            rtvsHost    = s.rtvsHost,
-            rtvsPort    = s.rtvsPort,
+            phoneNumber    = s.phoneNumber,
+            terminalId     = s.terminalId,
+            serverHost     = s.jt808Host,
+            serverPort     = s.jt808Port,
+            rtvsHost       = s.rtvsHost,
+            rtvsPort       = s.rtvsPort,
+            manufacturerId = s.manufacturerId,
+            terminalModel  = s.terminalModel,
+            plateColor     = s.plateColor,
+            vin            = s.vin,
         )
     }
 

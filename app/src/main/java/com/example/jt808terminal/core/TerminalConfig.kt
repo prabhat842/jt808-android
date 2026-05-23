@@ -9,9 +9,9 @@ data class TerminalConfig(
     val serverPort: Int,
     val rtvsHost: String,
     val rtvsPort: Int,
-    val talkbackPort: Int = 6600,
-    val manufacturerId: String = "GOATAI",
-    val terminalModel: String = "AndroidV1",
-    val plateColor: Int = 0,   // 0 = unregistered — JT808-2013 §8.5 Table 7
-    val vin: String = "GOATAI0000000001",
+    // 0x0100 registration fields — all sourced from AppSettings, not hardcoded
+    val manufacturerId: String,   // 5-char, BYTE[5] in Table 7
+    val terminalModel: String,    // up to 20 chars, BYTE[20] in Table 7
+    val plateColor: Int,          // 0=unregistered per JT/T 415-2006
+    val vin: String,              // used as plate number when plateColor=0
 )
