@@ -36,9 +36,10 @@ import com.example.jt808terminal.jt1078.RtvsConnection
 import com.example.jt808terminal.jt1078.VideoEncoder
 import com.example.jt808terminal.media.FtpUploader
 import com.example.jt808terminal.media.PlaybackSession
+import com.example.jt808terminal.db.TerminalDatabase
+import com.example.jt808terminal.media.DvrManager
 import com.example.jt808terminal.media.RecordingIndex
 import com.example.jt808terminal.media.StorageManager
-import com.example.jt808terminal.media.VideoRecorder
 import com.example.jt808terminal.protocol.Jt808Messages
 import com.example.jt808terminal.protocol.Jt808TcpClientImpl
 import com.example.jt808terminal.protocol.LocationReporter
@@ -100,8 +101,9 @@ class TerminalService : LifecycleService() {
     }
 
     // Phase 7 — recording, playback, file upload
+    private lateinit var db: TerminalDatabase
     private lateinit var recordingIndex: RecordingIndex
-    private lateinit var videoRecorder: VideoRecorder
+    private lateinit var dvrManager: DvrManager
     private var activePlayback: PlaybackSession? = null
     private var activeFtpUploader: FtpUploader? = null
 
@@ -125,8 +127,9 @@ class TerminalService : LifecycleService() {
         bsdAlarmState    = BsdAlarmState()
         val bsdEngine    = BsdEngine(bsdAlarmState)
         adasEngine       = AdasEngine(adasAlarmState, bsdEngine)
-        recordingIndex   = RecordingIndex(this)
-        videoRecorder    = VideoRecorder(this, channel = 1, recordingIndex)
+        db               = TerminalDatabase.getInstance(this)
+        recordingIndex   = RecordingIndex(db.dvrSegmentDao())
+        dvrManager       = DvrManager(this, channel = 1, db.dvrSegmentDao(), scope)
 
         // ML Kit init on IO thread (both DMS and ADAS detectors), then bind both cameras on Main.
         scope.launch(Dispatchers.IO) {
@@ -135,7 +138,7 @@ class TerminalService : LifecycleService() {
             withContext(Dispatchers.Main) {
                 Log.i(TAG, "DMS + ADAS ready — starting always-on cameras")
                 rebindAllCameras()
-                videoRecorder.start()
+                dvrManager.start()
             }
         }
 
@@ -157,6 +160,7 @@ class TerminalService : LifecycleService() {
             dmsAlarmState  = dmsAlarmState,
             adasAlarmState = adasAlarmState,
             bsdAlarmState  = bsdAlarmState,
+            gpsPointDao    = db.gpsPointDao(),
         )
 
         // Network connectivity monitoring — reconnect promptly on network restore (Phase 8).
@@ -168,20 +172,21 @@ class TerminalService : LifecycleService() {
 
         // Evict old recordings on startup to reclaim storage (Phase 8).
         scope.launch(Dispatchers.IO) {
-            StorageManager.evict(recordingIndex, AppSettings(this@TerminalService).maxStorageMb)
+            StorageManager.evict(db.dvrSegmentDao(), AppSettings(this@TerminalService).maxStorageMb)
         }
 
-        // DMS danger alarm → immediate 0x0200 so server auto-triggers 0x9101 — spec §5.2
+        // DMS danger alarm → immediate 0x0200 + tag DVR segment as alarm clip
         dmsEngine.onAlarmLevelChange = { level ->
-            if (level >= 2) locationReporter.reportNow()
+            if (level >= 2) {
+                locationReporter.reportNow()
+                dvrManager.markAlarm(1L shl 14)   // Table 24 bit 14: Fatigue driving warning
+            }
         }
 
-        // ADAS FCW → immediate 0x0200 (same server-side trigger logic as DMS danger)
-        adasEngine.onCollisionWarning = { locationReporter.reportNow() }
-        // Tag current recording segment with FCW alarm bit so 0x9205 alarm queries work
+        // ADAS FCW → immediate 0x0200 + tag DVR segment as alarm clip — Table 24 bit 29
         adasEngine.onCollisionWarning = {
             locationReporter.reportNow()
-            videoRecorder.markAlarm(1L shl 29)  // Table 24 bit 29: Collision warning
+            dvrManager.markAlarm(1L shl 29)
         }
     }
 
@@ -201,7 +206,7 @@ class TerminalService : LifecycleService() {
         stopStreaming()
         activePlayback?.stop(); activePlayback = null
         activeFtpUploader?.isCancelled = true; activeFtpUploader = null
-        videoRecorder.stop()
+        dvrManager.stop()
         scope.cancel()
         jt808Client.disconnect()
         dmsEngine.stop()
@@ -244,7 +249,7 @@ class TerminalService : LifecycleService() {
 
             // Back camera — ADAS+BSD ImageAnalysis + VideoCapture for local recording
             val adasAnalysis = adasImageAnalysis
-            val videoCapture = videoRecorder.videoCapture
+            val videoCapture = dvrManager.videoCapture
             if (adasAnalysis != null) {
                 provider.bindToLifecycle(
                     this, CameraSelector.DEFAULT_BACK_CAMERA,

@@ -13,6 +13,7 @@ object MsgId {
     const val TERMINAL_REGISTER       = 0x0100
     const val TERMINAL_AUTH           = 0x0102
     const val LOCATION_REPORT         = 0x0200
+    const val LOCATION_BATCH_UPLOAD   = 0x0704   // bulk GPS upload — JT808-2013 §8.49
     const val MULTIMEDIA_EVENT_UPLOAD = 0x0800
     const val MULTIMEDIA_DATA_UPLOAD  = 0x0801   // DMS snapshot JPEG
 

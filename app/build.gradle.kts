@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.kapt")
 }
 
 android {
@@ -56,4 +57,8 @@ dependencies {
     implementation("com.google.mlkit:object-detection:17.0.2")
     // CameraX VideoCapture — Phase 7 local recording
     implementation("androidx.camera:camera-video:1.3.4")
+    // Room — local DVR index + GPS offline buffer
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    kapt("androidx.room:room-compiler:2.6.1")
 }
