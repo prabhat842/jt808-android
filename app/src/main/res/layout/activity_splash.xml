@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    GoatAI Fleet Terminal — Splash Screen
+
+    Design tokens sourced from:
+      jt808-control/target/classes/static/style.css  (GoatAI brand palette)
+      jt808-server/ui/src/components/Layout.tsx       (brand treatment)
+      jt808-control/target/classes/static/favicon.svg (logo shape)
+
+    Palette:
+      Background : #091117
+      Purple     : #863bff  (primary brand / logo)
+      Cyan       : #22d3ee  (electric accent)
+      Foreground : #d8e1e8
+      Muted      : #93a1ad
+      Border     : #1f2e3a
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_splash">
+
+    <!--
+        Technical grid overlay — very faint horizontal lines (matches .technical-grid in style.css).
+        Implemented as a repeating shape via a transparent colour so it shows through
+        without obscuring content.
+    -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/grid_overlay"
+        android:alpha="0.08" />
+
+    <!-- ── Centre content ────────────────────────────────────────────── -->
+    <LinearLayout
+        android:id="@+id/splash_center"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingHorizontal="40dp"
+        tools:ignore="UseCompoundDrawables">
+
+        <!-- Logo mark -->
+        <ImageView
+            android:id="@+id/splash_logo"
+            android:layout_width="88dp"
+            android:layout_height="84dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/ic_goatai_logo"
+            android:alpha="0" />
+
+        <!-- "GoatAI" wordmark -->
+        <TextView
+            android:id="@+id/splash_wordmark"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="GoatAI"
+            android:textColor="@color/goatai_purple"
+            android:textSize="34sp"
+            android:letterSpacing="0.18"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
+            android:alpha="0" />
+
+        <!-- Horizontal rule with electric cyan ends — matches GoatAI dividers -->
+        <FrameLayout
+            android:layout_width="180dp"
+            android:layout_height="1dp"
+            android:layout_marginTop="14dp"
+            android:layout_marginBottom="14dp"
+            android:alpha="0"
+            android:id="@+id/splash_divider">
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/goatai_border" />
+
+            <!-- Electric left cap -->
+            <View
+                android:layout_width="20dp"
+                android:layout_height="1dp"
+                android:background="@color/goatai_electric"
+                android:layout_gravity="start|center_vertical" />
+
+            <!-- Electric right cap -->
+            <View
+                android:layout_width="20dp"
+                android:layout_height="1dp"
+                android:background="@color/goatai_electric"
+                android:layout_gravity="end|center_vertical" />
+        </FrameLayout>
+
+        <!-- App subtitle: eyebrow style — uppercase tracking, muted -->
+        <TextView
+            android:id="@+id/splash_subtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="FLEET TERMINAL"
+            android:textColor="@color/goatai_muted_strong"
+            android:textSize="10sp"
+            android:letterSpacing="0.34"
+            android:textAllCaps="true"
+            android:fontFamily="sans-serif"
+            android:alpha="0" />
+
+        <!-- Protocol tags row -->
+        <LinearLayout
+            android:id="@+id/splash_tags"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:alpha="0">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="JT/T 808"
+                android:textColor="@color/goatai_electric"
+                android:textSize="9sp"
+                android:letterSpacing="0.1"
+                android:fontFamily="monospace"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
+                android:background="@drawable/tag_electric" />
+
+            <View
+                android:layout_width="8dp"
+                android:layout_height="1dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="JT/T 1078"
+                android:textColor="@color/goatai_electric"
+                android:textSize="9sp"
+                android:letterSpacing="0.1"
+                android:fontFamily="monospace"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
+                android:background="@drawable/tag_electric" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- ── Bottom bar ─────────────────────────────────────────────────── -->
+    <LinearLayout
+        android:id="@+id/splash_bottom"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:paddingBottom="48dp"
+        android:alpha="0">
+
+        <!-- Indeterminate progress dots (pulsing ●●●) -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginBottom="16dp">
+
+            <View
+                android:id="@+id/dot1"
+                android:layout_width="4dp"
+                android:layout_height="4dp"
+                android:layout_marginHorizontal="4dp"
+                android:background="@drawable/dot_pulse" />
+
+            <View
+                android:id="@+id/dot2"
+                android:layout_width="4dp"
+                android:layout_height="4dp"
+                android:layout_marginHorizontal="4dp"
+                android:background="@drawable/dot_pulse" />
+
+            <View
+                android:id="@+id/dot3"
+                android:layout_width="4dp"
+                android:layout_height="4dp"
+                android:layout_marginHorizontal="4dp"
+                android:background="@drawable/dot_pulse" />
+
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="GoatAI Private Limited"
+            android:textColor="@color/goatai_muted"
+            android:textSize="9sp"
+            android:letterSpacing="0.08"
+            android:fontFamily="sans-serif" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="v0.1.0"
+            android:textColor="@color/goatai_border"
+            android:textSize="8sp"
+            android:fontFamily="monospace" />
+
+    </LinearLayout>
+
+</FrameLayout>

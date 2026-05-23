@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- GoatAI brand palette — sourced from jt808-control/target/classes/static/style.css -->
+    <color name="goatai_bg">#091117</color>
+    <color name="goatai_bg_elevated">#0d1720</color>
+    <color name="goatai_surface">#111b24</color>
+
+    <!-- Primary brand: purple lightning bolt -->
+    <color name="goatai_purple">#863bff</color>
+    <color name="goatai_purple_deep">#7e14ff</color>
+    <color name="goatai_purple_soft">#3a1a66</color>
+
+    <!-- Electric cyan accent -->
+    <color name="goatai_electric">#22d3ee</color>
+    <color name="goatai_electric_blue">#47bfff</color>
+    <color name="goatai_electric_soft">#0a2a33</color>
+
+    <!-- Typography -->
+    <color name="goatai_fg">#d8e1e8</color>
+    <color name="goatai_fg_strong">#f3f6f8</color>
+    <color name="goatai_muted">#93a1ad</color>
+    <color name="goatai_muted_strong">#b0bcc7</color>
+
+    <!-- Borders -->
+    <color name="goatai_border">#1f2e3a</color>
+
+    <!-- Status -->
+    <color name="goatai_ok">#4ade80</color>
+    <color name="goatai_warn">#fb923c</color>
+</resources>

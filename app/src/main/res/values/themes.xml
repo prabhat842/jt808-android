@@ -1,10 +1,30 @@
 <resources>
+
+    <!-- Main app theme — GoatAI colour tokens -->
     <style name="Theme.Jt808Terminal" parent="Theme.MaterialComponents.NoActionBar">
-        <item name="android:windowBackground">#121212</item>
-        <item name="android:statusBarColor">#000000</item>
-        <item name="android:navigationBarColor">#121212</item>
-        <item name="colorPrimary">#4CAF50</item>
-        <item name="colorPrimaryVariant">#388E3C</item>
-        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="android:windowBackground">@color/goatai_bg</item>
+        <item name="android:statusBarColor">@color/goatai_bg</item>
+        <item name="android:navigationBarColor">@color/goatai_bg</item>
+        <item name="colorPrimary">@color/goatai_purple</item>
+        <item name="colorPrimaryVariant">@color/goatai_purple_deep</item>
+        <item name="colorOnPrimary">@color/goatai_fg_strong</item>
+        <item name="colorSecondary">@color/goatai_electric</item>
+        <item name="colorOnSecondary">@color/goatai_bg</item>
+        <item name="android:textColorPrimary">@color/goatai_fg</item>
+        <item name="android:textColorSecondary">@color/goatai_muted</item>
     </style>
+
+    <!--
+        Splash theme — full-screen, no action bar, dark status/nav bars.
+        Applied to SplashActivity in AndroidManifest.xml.
+    -->
+    <style name="Theme.Jt808Terminal.Splash" parent="Theme.Jt808Terminal">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">@color/goatai_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/goatai_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
 </resources>

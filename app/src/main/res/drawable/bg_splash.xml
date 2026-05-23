@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Subtle radial glow behind the logo — matches the electric-glow in style.css -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Base dark background -->
+    <item>
+        <color android:color="@color/goatai_bg" />
+    </item>
+
+    <!-- Faint radial purple glow centred in the upper half -->
+    <item>
+        <shape android:shape="oval">
+            <gradient
+                android:type="radial"
+                android:gradientRadius="220%"
+                android:centerX="0.5"
+                android:centerY="0.32"
+                android:startColor="#18100033"
+                android:endColor="@android:color/transparent" />
+        </shape>
+    </item>
+
+</layer-list>
