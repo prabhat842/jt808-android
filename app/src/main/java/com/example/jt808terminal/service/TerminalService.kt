@@ -369,7 +369,7 @@ class TerminalService : LifecycleService() {
             channel      = cmd.channel,
             startMs      = cmd.startMs,
             endMs        = cmd.endMs,
-            alarmFlags   = 0L,
+            alarmMask    = 0L,
             resourceType = cmd.avType,
         )
         // Reply with matching resource list first — spec §5.6.3
@@ -433,7 +433,7 @@ class TerminalService : LifecycleService() {
             channel      = cmd.channel,
             startMs      = cmd.startMs,
             endMs        = cmd.endMs,
-            alarmFlags   = cmd.alarmFlags,
+            alarmMask    = cmd.alarmFlags,
             resourceType = cmd.resourceType,
         )
         if (matches.isEmpty()) {
