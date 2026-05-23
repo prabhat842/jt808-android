@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
@@ -85,7 +86,7 @@ class PlaybackSession(
 
             Log.i(TAG, "Playback started: ${entry.filePath}")
 
-            while (isActive) {
+            while (currentCoroutineContext().isActive) {
                 // Drain any pending control commands (non-blocking)
                 drainControl(control) { cmd, seekMs ->
                     when (cmd) {
