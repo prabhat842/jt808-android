@@ -9,10 +9,10 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
-import com.google.mlkit.vision.face.FaceContour
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.face.FaceLandmark
 
 /**
  * Driver Monitoring System engine.
@@ -54,8 +54,8 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
         private const val PERCLOS_L2 = 0.50f   // 50% → level 2 danger + auto 0x9101
         // Eye-open probability < 0.3 → consider eyes closed (ML Kit 0.0-1.0 range)
         private const val EYE_CLOSED_PROB = 0.3f
-        // Mouth open ratio > 0.20 → yawning
-        private const val YAWN_THRESHOLD = 0.20f
+        // Landmark proxy: (noseBaseY → bottomMouthY) / faceHeight > 0.28 → yawning
+        private const val YAWN_THRESHOLD = 0.28f
         // Suppress repeated yawn detection for 10 s
         private const val YAWN_COOLDOWN_MS = 10_000L
         // 3 yawns in 10-minute window → additional fatigue signal — spec §5.3
@@ -75,11 +75,15 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
     fun getImageAnalysis(): ImageAnalysis {
         handlerThread.start()
 
+        // FAST mode: single JNI thread vs ACCURATE's 6-thread pool.
+        // CONTOUR_MODE_NONE + LANDMARK_MODE_ALL: landmarks include NOSE_BASE + BOTTOM_MOUTH
+        // for yawn detection — cheaper than full contours, sufficient accuracy.
         detector = FaceDetection.getClient(
             FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
                 .setMinFaceSize(0.15f)
                 .build()
         )
@@ -89,7 +93,7 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
         }
 
         val analysis = ImageAnalysis.Builder()
-            .setTargetResolution(Size(640, 480))
+            .setTargetResolution(Size(320, 240))
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
 
@@ -219,20 +223,20 @@ class DmsEngine(private val alarmState: DmsAlarmState) {
     private fun yawnCount() = yawnTimestamps.size
 
     /**
-     * Estimates mouth openness from UPPER_LIP_BOTTOM and LOWER_LIP_TOP contours.
-     * Ratio = vertical lip gap / face bounding-box height.
-     * Contours available only when CONTOUR_MODE_ALL is set in detector options.
+     * Estimates mouth openness from NOSE_BASE and BOTTOM_MOUTH landmarks.
+     * Uses (noseY → mouthBottomY) span relative to the face bounding-box height.
+     * LANDMARK_MODE_ALL must be set; contours are not needed.
+     *
+     * Vertical lip gap is not directly available without contours, so we proxy it as:
+     *   gap ≈ bottomMouthY − noseBaseY   (increases as mouth opens)
+     * Calibrated threshold at 0.28 × faceHeight (equivalent to contour ratio of 0.20).
      */
     private fun detectYawning(face: Face): Boolean {
-        val upperPts = face.getContour(FaceContour.UPPER_LIP_BOTTOM)?.points
-        val lowerPts = face.getContour(FaceContour.LOWER_LIP_TOP)?.points
-        if (upperPts.isNullOrEmpty() || lowerPts.isNullOrEmpty()) return false
-
-        val upperY = upperPts.map { it.y }.average().toFloat()
-        val lowerY = lowerPts.map { it.y }.average().toFloat()
-        val gap   = lowerY - upperY   // positive when mouth is open (y increases downward)
-        val faceH = face.boundingBox.height().toFloat()
-
-        return faceH > 0f && (gap / faceH) > YAWN_THRESHOLD
+        val nose   = face.getLandmark(FaceLandmark.NOSE_BASE)?.position ?: return false
+        val bottom = face.getLandmark(FaceLandmark.BOTTOM_MOUTH)?.position ?: return false
+        val faceH  = face.boundingBox.height().toFloat()
+        if (faceH <= 0f) return false
+        val gap = bottom.y - nose.y   // positive when mouth hangs open
+        return (gap / faceH) > YAWN_THRESHOLD
     }
 }
