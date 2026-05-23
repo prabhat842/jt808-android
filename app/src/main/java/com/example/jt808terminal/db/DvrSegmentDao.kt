@@ -62,7 +62,7 @@ interface DvrSegmentDao {
     @Query("SELECT * FROM dvr_segment WHERE endMs > 0 AND isAlarmClip = 0 ORDER BY startMs ASC")
     suspend fun getNormalSegmentsForSizeEviction(): List<DvrSegmentEntity>
 
-    @Query("SELECT SUM(fileSizeBytes) FROM dvr_segment WHERE endMs > 0")
+    @Query("SELECT COALESCE(SUM(fileSizeBytes), 0) FROM dvr_segment WHERE endMs > 0")
     suspend fun totalSizeBytes(): Long
 
     @Query("SELECT * FROM dvr_segment ORDER BY startMs ASC")
