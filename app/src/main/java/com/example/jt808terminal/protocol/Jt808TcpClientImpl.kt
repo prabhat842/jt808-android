@@ -62,6 +62,9 @@ class Jt808TcpClientImpl(
     /** Invoked on the caller's scope for every inbound platform command after authentication. */
     var onCommand: ((frame: DecodedFrame) -> Unit)? = null
 
+    /** Invoked once each time authentication succeeds (including after reconnects). */
+    var onAuthenticated: (() -> Unit)? = null
+
     // --- Jt808Client interface ---
 
     override fun connect() { /* managed by start() */ }
@@ -90,6 +93,13 @@ class Jt808TcpClientImpl(
     private suspend fun connectLoop() {
         var backoffMs = 1_000L
         while (true) {
+            if (config.serverHost.isBlank()) {
+                // Not configured yet — wait silently for forceReconnect() which fires after
+                // SettingsActivity saves a host and restarts the service.
+                Log.d(TAG, "JT808 host not configured — waiting")
+                reconnectSignal.receive()   // blocks until forceReconnect() or network change
+                continue
+            }
             try {
                 connectAndRun()
                 backoffMs = 1_000L
@@ -185,6 +195,7 @@ class Jt808TcpClientImpl(
         if (responseId == TERMINAL_AUTH && result == 0) {
             authenticated = true
             Log.i(TAG, "Authentication succeeded — terminal ready")
+            onAuthenticated?.invoke()
         }
     }
 

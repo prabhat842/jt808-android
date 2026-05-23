@@ -84,6 +84,11 @@ class LocationReporter(
         scope.launch { report() }
     }
 
+    /** Immediately flushes the offline GPS buffer — called when authentication is restored. */
+    fun flushNow() {
+        if (gpsPointDao != null) scope.launch(Dispatchers.IO) { flushOfflineBuffer() }
+    }
+
     // -------------------------------------------------------------------------
 
     private suspend fun report() {
@@ -139,22 +144,21 @@ class LocationReporter(
         if (client.isAuthenticated()) {
             client.sendLocationReport(body)
             Log.v(TAG, "0x0200 sent lat=$latDeg lon=$lonDeg speed=${"%.1f".format(speedKph)}km/h alarm=0x${alarmFlags.toString(16)}")
-        } else {
-            // Offline — buffer to Room for 0x0704 batch upload on reconnect
-            gpsPointDao?.let { dao ->
-                scope.launch(Dispatchers.IO) {
-                    dao.insert(GpsPointEntity(
-                        timestampMs  = now,
-                        latitudeDeg  = latDeg,
-                        longitudeDeg = lonDeg,
-                        altitudeM    = altM,
-                        speedKph     = speedKph,
-                        headingDeg   = heading,
-                        alarmFlags   = alarmFlags,
-                        statusFlags  = statusFlags,
-                    ))
-                }
-                Log.d(TAG, "Offline: GPS point buffered (${dao.pendingCount()} pending)")
+        } else if (loc != null && gpsPointDao != null) {
+            // Offline and have a real GPS fix — buffer for 0x0704 batch upload on reconnect.
+            // Skip buffering when loc==null (no fix) to avoid storing useless zero-coordinate rows.
+            scope.launch(Dispatchers.IO) {
+                gpsPointDao.insert(GpsPointEntity(
+                    timestampMs  = now,
+                    latitudeDeg  = latDeg,
+                    longitudeDeg = lonDeg,
+                    altitudeM    = altM,
+                    speedKph     = speedKph,
+                    headingDeg   = heading,
+                    alarmFlags   = alarmFlags,
+                    statusFlags  = statusFlags,
+                ))
+                Log.d(TAG, "Offline: GPS point buffered (${gpsPointDao.pendingCount()} pending)")
             }
         }
     }

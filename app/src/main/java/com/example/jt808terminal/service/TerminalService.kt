@@ -163,6 +163,11 @@ class TerminalService : LifecycleService() {
             gpsPointDao    = db.gpsPointDao(),
         )
 
+        // Wire reconnect→flush after locationReporter is constructed.
+        jt808Client.onAuthenticated = {
+            locationReporter.flushNow()
+        }
+
         // Network connectivity monitoring — reconnect promptly on network restore (Phase 8).
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val req = NetworkRequest.Builder()
