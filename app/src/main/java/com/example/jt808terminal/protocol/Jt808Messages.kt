@@ -238,6 +238,97 @@ object Jt808Messages {
     fun fileUploadComplete(responseSeq: Int, success: Boolean): ByteArray =
         word(responseSeq) + byteArrayOf(if (success) 0 else 1)
 
+    // -- Autonomous alarm media upload (0x0800 + 0x0801) ---------------------
+
+    /**
+     * 0x0800 Multimedia event upload body — JT808-2013 §8.41 Table 52.
+     *
+     * [0-3] Multimedia data ID  DWORD
+     * [4]   Media type          BYTE  0=image 1=audio 2=video
+     * [5]   Format code         BYTE  0=JPEG 4=WMV
+     * [6]   Event item code     BYTE  0=platform cmd 1=alarm 2=robbery 3=collision
+     * [7]   Channel ID          BYTE
+     */
+    fun multimediaEvent(
+        mediaId: Long,
+        mediaType: Int,
+        formatCode: Int,
+        eventCode: Int,
+        channelId: Int,
+    ): ByteArray = dword(mediaId.toInt()) +
+        byteArrayOf(
+            mediaType.toByte(),
+            formatCode.toByte(),
+            eventCode.toByte(),
+            channelId.toByte(),
+        )
+
+    /**
+     * 0x0801 Multimedia data upload body — JT808-2013 §8.42 Table 53.
+     *
+     * [0-3]   Multimedia data ID  DWORD
+     * [4]     Media type          BYTE
+     * [5]     Format code         BYTE
+     * [6]     Event item code     BYTE
+     * [7]     Channel ID          BYTE
+     * [8-35]  Location info block 28 bytes — same fixed layout as 0x0200 (no additional items)
+     * [36+]   Multimedia data     BYTE[n]
+     */
+    fun multimediaDataUpload(
+        mediaId: Long,
+        mediaType: Int,
+        formatCode: Int,
+        eventCode: Int,
+        channelId: Int,
+        locationBlock: ByteArray,
+        payload: ByteArray,
+    ): ByteArray = dword(mediaId.toInt()) +
+        byteArrayOf(
+            mediaType.toByte(),
+            formatCode.toByte(),
+            eventCode.toByte(),
+            channelId.toByte(),
+        ) + locationBlock + payload
+
+    /**
+     * Builds the 28-byte location info block embedded in 0x0801 Table 53.
+     * Layout matches the fixed portion of 0x0200 Table 23 (no additional TLV items).
+     *
+     * [0-3]   Alarm sign   DWORD
+     * [4-7]   Status       DWORD
+     * [8-11]  Latitude     DWORD  |deg| × 10^6
+     * [12-15] Longitude    DWORD  |deg| × 10^6
+     * [16-17] Altitude     WORD   metres
+     * [18-19] Speed        WORD   1/10 km/h
+     * [20-21] Direction    WORD   0-359°
+     * [22-27] Time         BCD[6] YY-MM-DD-hh-mm-ss GMT+8
+     */
+    fun locationBlock(
+        alarmFlags: Long,
+        statusFlags: Long,
+        latitudeDeg: Double,
+        longitudeDeg: Double,
+        altitudeM: Int,
+        speedKph: Double,
+        headingDeg: Int,
+        timestampMs: Long,
+    ): ByteArray {
+        val lat = Math.round(Math.abs(latitudeDeg)  * 1_000_000).toInt()
+        val lon = Math.round(Math.abs(longitudeDeg) * 1_000_000).toInt()
+        val spd = Math.round(speedKph * 10).toInt().coerceIn(0, 65535)
+        val hdg = Math.floorMod(headingDeg, 360)
+        val out = ArrayList<Byte>(28)
+        writeDWordL(out, alarmFlags.toInt())
+        writeDWordL(out, statusFlags.toInt())
+        writeDWordL(out, lat)
+        writeDWordL(out, lon)
+        writeWordL(out, altitudeM)
+        writeWordL(out, spd)
+        writeWordL(out, hdg)
+        for (b in bcdTimestampGmt8(timestampMs)) out.add(b)
+        return out.toByteArray()
+    }
+
     // -- Additional info item builders for DMS/ADAS/BSD (Phase 4+) --------
 
     /**
@@ -270,7 +361,7 @@ object Jt808Messages {
      * Format: YY MM DD hh mm ss (each pair as one BCD byte).
      */
     private fun bcdTimestampGmt8(epochMs: Long): ByteArray {
-        val cal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"))
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"))
         cal.timeInMillis = epochMs
         return byteArrayOf(
             bcd(cal.get(Calendar.YEAR) % 100),

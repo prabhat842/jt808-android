@@ -22,6 +22,63 @@ package com.example.jt808terminal.protocol
  */
 object Jt808Codec {
 
+    /** Maximum body bytes per single JT808 packet — body length field is 10 bits. */
+    const val MAX_BODY_PER_PACKET = 1023
+
+    /**
+     * Encodes a (possibly large) body as one or more JT808 frames.
+     *
+     * When [body] fits in a single packet (≤ [MAX_BODY_PER_PACKET] bytes) this returns
+     * a list with one element identical to [encodeFrame].
+     *
+     * When [body] exceeds the limit it is split into chunks and each chunk is sent as a
+     * sub-packet frame (bit 13 of bodyProps = 1) per JT808-2013 §4.4.3 Table 2.
+     * All sub-packets share the same [seqNum]; the 4-byte sub-packet header inserted
+     * after the 12-byte main header carries [totalPackets WORD, currentNum WORD (1-based)].
+     */
+    fun encodeFrames(msgId: Int, phoneNumber: String, seqNum: Int, body: ByteArray): List<ByteArray> {
+        if (body.size <= MAX_BODY_PER_PACKET) {
+            return listOf(encodeFrame(msgId, phoneNumber, seqNum, body))
+        }
+        val chunks = body.asList().chunked(MAX_BODY_PER_PACKET)
+        val total  = chunks.size
+        return chunks.mapIndexed { idx, chunk ->
+            encodeSubPacketFrame(msgId, phoneNumber, seqNum, chunk.toByteArray(), total, idx + 1)
+        }
+    }
+
+    private fun encodeSubPacketFrame(
+        msgId: Int, phoneNumber: String, seqNum: Int,
+        chunk: ByteArray, total: Int, current: Int,
+    ): ByteArray {
+        val header  = buildSubPacketHeader(msgId, phoneNumber, seqNum, chunk.size, total, current)
+        val payload = header + chunk
+        val checksum = payload.fold(0) { acc, b -> acc xor (b.toInt() and 0xFF) } and 0xFF
+        val escaped  = escape(payload + byteArrayOf(checksum.toByte()))
+        return byteArrayOf(0x7E.toByte()) + escaped + byteArrayOf(0x7E.toByte())
+    }
+
+    private fun buildSubPacketHeader(
+        msgId: Int, phoneNumber: String, seqNum: Int,
+        chunkLen: Int, total: Int, current: Int,
+    ): ByteArray {
+        // 12-byte main header + 4-byte sub-packet info block
+        val h = ByteArray(16)
+        h[0] = (msgId shr 8).toByte()
+        h[1] = (msgId and 0xFF).toByte()
+        // bodyProps: bits 0-9 = chunkLen, bit 13 = 1 (sub-package flag)
+        val props = 0x2000 or (chunkLen and 0x03FF)
+        h[2] = (props shr 8).toByte()
+        h[3] = (props and 0xFF).toByte()
+        writeBcd(h, 4, phoneNumber, 6)
+        h[10] = (seqNum shr 8).toByte()
+        h[11] = (seqNum and 0xFF).toByte()
+        // Sub-packet info — JT808-2013 §4.4.3 Table 2
+        h[12] = (total   shr 8).toByte(); h[13] = (total   and 0xFF).toByte()
+        h[14] = (current shr 8).toByte(); h[15] = (current and 0xFF).toByte()
+        return h
+    }
+
     /** Encodes a complete JT808 frame ready to write to the socket. */
     fun encodeFrame(msgId: Int, phoneNumber: String, seqNum: Int, body: ByteArray): ByteArray {
         val header = buildHeader(msgId, phoneNumber, seqNum, body.size)

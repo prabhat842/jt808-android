@@ -14,10 +14,15 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.util.Size
+import java.util.Locale
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
@@ -35,6 +40,7 @@ import com.example.jt808terminal.jt1078.Jt1078Command
 import com.example.jt808terminal.jt1078.RtvsConnection
 import com.example.jt808terminal.jt1078.VideoEncoder
 import com.example.jt808terminal.media.FtpUploader
+import com.example.jt808terminal.protocol.AlarmMediaPolicy
 import com.example.jt808terminal.media.PlaybackSession
 import com.example.jt808terminal.db.TerminalDatabase
 import com.example.jt808terminal.media.DvrManager
@@ -83,6 +89,10 @@ class TerminalService : LifecycleService() {
     private lateinit var dmsEngine: DmsEngine
     @Volatile private var dmsImageAnalysis: ImageAnalysis? = null
 
+    // Alarm snapshot capture — front camera ImageCapture use case
+    private var alarmImageCapture: ImageCapture? = null
+    private val mediaIdGen = java.util.concurrent.atomic.AtomicLong(1L)
+
     // ADAS + BSD — always-on from service start (back camera)
     private lateinit var adasAlarmState: AdasAlarmState
     private lateinit var bsdAlarmState: BsdAlarmState
@@ -107,6 +117,17 @@ class TerminalService : LifecycleService() {
     private var activePlayback: PlaybackSession? = null
     private var activeFtpUploader: FtpUploader? = null
 
+    // DMS voice alerts
+    private var tts: TextToSpeech? = null
+    private val lastSpokenMs = mutableMapOf<String, Long>()
+    private val SPEAK_COOLDOWN_MS = 8_000L
+    private val audioCheckRunnable = object : Runnable {
+        override fun run() {
+            speakActiveAlerts()
+            mainHandler.postDelayed(this, 1_000L)
+        }
+    }
+
     // Active streaming session (null when not streaming)
     private var rtvsConnection: RtvsConnection? = null
     private var videoEncoder: VideoEncoder? = null
@@ -114,6 +135,14 @@ class TerminalService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.US
+                mainHandler.post(audioCheckRunnable)
+                Log.i(TAG, "TTS ready")
+            }
+        }
         config = buildConfig()
 
         // Prevent CPU sleep during active driving session — spec §10.3
@@ -122,7 +151,7 @@ class TerminalService : LifecycleService() {
             .also { it.acquire() }
 
         dmsAlarmState    = DmsAlarmState()
-        dmsEngine        = DmsEngine(dmsAlarmState)
+        dmsEngine        = DmsEngine(this, dmsAlarmState)
         adasAlarmState   = AdasAlarmState()
         bsdAlarmState    = BsdAlarmState()
         val bsdEngine    = BsdEngine(bsdAlarmState)
@@ -130,6 +159,9 @@ class TerminalService : LifecycleService() {
         db               = TerminalDatabase.getInstance(this)
         recordingIndex   = RecordingIndex(db.dvrSegmentDao())
         dvrManager       = DvrManager(this, channel = 1, db.dvrSegmentDao(), scope)
+        alarmImageCapture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .build()
 
         // ML Kit init on IO thread (both DMS and ADAS detectors), then bind both cameras on Main.
         scope.launch(Dispatchers.IO) {
@@ -168,6 +200,14 @@ class TerminalService : LifecycleService() {
             locationReporter.flushNow()
         }
 
+        // Rising-edge alarm bits → autonomous 0x0800+0x0801 snapshot upload.
+        locationReporter.onAlarmRising = { bit, alarmFlags, statusFlags, speedKph, latDeg, lonDeg ->
+            val action = AlarmMediaPolicy.forAlarmBit(bit)
+            if (action != null) {
+                captureAndUploadAlarmSnapshot(action, alarmFlags, statusFlags, speedKph, latDeg, lonDeg)
+            }
+        }
+
         // Network connectivity monitoring — reconnect promptly on network restore (Phase 8).
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val req = NetworkRequest.Builder()
@@ -180,18 +220,39 @@ class TerminalService : LifecycleService() {
             StorageManager.evict(db.dvrSegmentDao(), AppSettings(this@TerminalService).maxStorageMb)
         }
 
-        // DMS danger alarm → immediate 0x0200 + tag DVR segment as alarm clip
+        // DMS danger alarm → immediate 0x0200 + tag DVR segment + send 0x0800+0x0801 evidence
         dmsEngine.onAlarmLevelChange = { level ->
             if (level >= 2) {
                 locationReporter.reportNow()
                 dvrManager.markAlarm(1L shl 14)   // Table 24 bit 14: Fatigue driving warning
+                val loc = locationReporter.latestLocation()
+                val alarmFlags  = 1L shl 14
+                val statusFlags = 0x01L or if (loc != null) 0x02L else 0L
+                val speedKph    = loc?.speed?.toDouble()?.times(3.6) ?: 0.0
+                val latDeg      = loc?.latitude  ?: 0.0
+                val lonDeg      = loc?.longitude ?: 0.0
+                for (action in AlarmMediaPolicy.forDmsAlarmActions(AlarmMediaPolicy.DMS_FATIGUE)) {
+                    captureAndUploadAlarmSnapshot(action, alarmFlags, statusFlags, speedKph, latDeg, lonDeg)
+                }
             }
         }
 
-        // ADAS FCW → immediate 0x0200 + tag DVR segment as alarm clip — Table 24 bit 29
+        // ADAS FCW → immediate 0x0200 + tag DVR segment + send 0x0800+0x0801 evidence
         adasEngine.onCollisionWarning = {
             locationReporter.reportNow()
             dvrManager.markAlarm(1L shl 29)
+            val action = AlarmMediaPolicy.forAlarmBit(29)
+            if (action != null) {
+                val loc         = locationReporter.latestLocation()
+                val alarmFlags  = 1L shl 29
+                val statusFlags = 0x01L or if (loc != null) 0x02L else 0L
+                captureAndUploadAlarmSnapshot(
+                    action, alarmFlags, statusFlags,
+                    loc?.speed?.toDouble()?.times(3.6) ?: 0.0,
+                    loc?.latitude  ?: 0.0,
+                    loc?.longitude ?: 0.0,
+                )
+            }
         }
     }
 
@@ -206,6 +267,9 @@ class TerminalService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        instance = null
+        mainHandler.removeCallbacks(audioCheckRunnable)
+        tts?.stop(); tts?.shutdown(); tts = null
         (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
             .unregisterNetworkCallback(networkCallback)
         stopStreaming()
@@ -234,21 +298,45 @@ class TerminalService : LifecycleService() {
         withCameraProvider { provider ->
             provider.unbindAll()
 
-            // Front camera — DMS face detection + optional video preview for streaming
-            val dmsAnalysis = dmsImageAnalysis
+            // Build a local display preview if MainActivity has a PreviewView attached.
+            // Streaming preview takes priority over local display preview.
+            val localProvider = TerminalService.localPreviewProvider
+            val localPreview = if (streamingPreview == null && localProvider != null) {
+                Preview.Builder().build().also { it.setSurfaceProvider(localProvider) }
+            } else null
+
+            // Front camera — DMS face detection + alarm ImageCapture + optional video/display preview
+            val dmsAnalysis   = dmsImageAnalysis
+            val alarmCapture  = alarmImageCapture
             if (dmsAnalysis != null) {
-                if (streamingPreview != null) {
-                    provider.bindToLifecycle(
-                        this, CameraSelector.DEFAULT_FRONT_CAMERA,
-                        streamingPreview, dmsAnalysis,
-                    )
-                    Log.i(TAG, "Front camera bound — streaming + DMS")
-                } else {
-                    provider.bindToLifecycle(
-                        this, CameraSelector.DEFAULT_FRONT_CAMERA,
-                        dmsAnalysis,
-                    )
-                    Log.i(TAG, "Front camera bound — DMS only")
+                when {
+                    streamingPreview != null -> {
+                        if (alarmCapture != null)
+                            provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
+                                streamingPreview, dmsAnalysis, alarmCapture)
+                        else
+                            provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
+                                streamingPreview, dmsAnalysis)
+                        Log.i(TAG, "Front camera bound — streaming + DMS + alarm capture")
+                    }
+                    localPreview != null -> {
+                        if (alarmCapture != null)
+                            provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
+                                localPreview, dmsAnalysis, alarmCapture)
+                        else
+                            provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
+                                localPreview, dmsAnalysis)
+                        Log.i(TAG, "Front camera bound — display preview + DMS + alarm capture")
+                    }
+                    else -> {
+                        if (alarmCapture != null)
+                            provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
+                                dmsAnalysis, alarmCapture)
+                        else
+                            provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
+                                dmsAnalysis)
+                        Log.i(TAG, "Front camera bound — DMS + alarm capture")
+                    }
                 }
             }
 
@@ -615,6 +703,29 @@ class TerminalService : LifecycleService() {
         }
     }
 
+    // ---- DMS voice alerts ---------------------------------------------------
+
+    private fun speakActiveAlerts() {
+        if (!AppSettings(this).dmsAudioEnabled) return
+        if (!isAppInForeground) return
+        val s = dmsAlarmState
+        val now = System.currentTimeMillis()
+
+        fun maybeSpeak(key: String, phrase: String) {
+            if ((now - (lastSpokenMs[key] ?: 0L)) > SPEAK_COOLDOWN_MS) {
+                tts?.speak(phrase, TextToSpeech.QUEUE_ADD, null, key)
+                lastSpokenMs[key] = now
+            }
+        }
+
+        if (!s.faceDetected)  maybeSpeak("face",  "Face not detected")
+        if (s.eyesClosed)     maybeSpeak("eyes",  "Eyes closing, be alert")
+        if (s.isYawning)      maybeSpeak("yawn",  "Yawning detected, stay alert")
+        if (s.headDistracted) maybeSpeak("head",  "Head distracted, look forward")
+        if (s.alarmLevel >= 2) maybeSpeak("fatigue", "Danger, fatigue alert")
+        else if (s.alarmLevel == 1) maybeSpeak("fatigue", "Fatigue warning")
+    }
+
     // ---- Phase 8: memory pressure --------------------------------------------
 
     /**
@@ -632,6 +743,74 @@ class TerminalService : LifecycleService() {
         }
     }
 
+    // ---- Autonomous alarm media upload (0x0800 + 0x0801) --------------------
+
+    /**
+     * Captures a JPEG from the front camera and uploads it as a JT808 multimedia item.
+     *
+     * Flow:
+     *   1. ImageCapture.takePicture → JPEG bytes (runs on main executor)
+     *   2. Build 0x0800 MultimediaEventUpload body (8 bytes)
+     *   3. Build 0x0801 MultimediaDataUpload body (36 bytes header + 28 bytes location + JPEG)
+     *   4. sendMultimediaUpload → sub-packet frames sent on IO thread
+     *
+     * VIDEO_CLIP policy actions are handled as JPEG stills — the DVR segment is already
+     * tagged via dvrManager.markAlarm() for FTP retrieval via 0x9206.
+     *
+     * Thread-safe: may be called from any thread.
+     */
+    private fun captureAndUploadAlarmSnapshot(
+        action: AlarmMediaPolicy.Action,
+        alarmFlags: Long,
+        statusFlags: Long,
+        speedKph: Double,
+        latDeg: Double,
+        lonDeg: Double,
+    ) {
+        val capture = alarmImageCapture ?: return
+        val mediaId     = mediaIdGen.incrementAndGet()
+        val captureTime = System.currentTimeMillis()
+        val loc         = locationReporter.latestLocation()
+        val altM        = loc?.altitude?.toInt() ?: 0
+        val headingDeg  = loc?.bearing?.toInt()  ?: 0
+
+        capture.takePicture(
+            ContextCompat.getMainExecutor(this),
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    val jpegBytes = imageProxyToJpeg(image)
+                    image.close()
+                    scope.launch(Dispatchers.IO) {
+                        val locBlock = Jt808Messages.locationBlock(
+                            alarmFlags, statusFlags,
+                            latDeg, lonDeg, altM, speedKph, headingDeg, captureTime,
+                        )
+                        val eventBody = Jt808Messages.multimediaEvent(
+                            mediaId, 0, 0, action.eventCode, action.channelId,
+                        )
+                        val dataBody = Jt808Messages.multimediaDataUpload(
+                            mediaId, 0, 0, action.eventCode, action.channelId,
+                            locBlock, jpegBytes,
+                        )
+                        jt808Client.sendMultimediaUpload(eventBody, dataBody)
+                        Log.i(TAG, "0x0800+0x0801 mediaId=$mediaId " +
+                            "label=${action.overlayLabel} jpeg=${jpegBytes.size}B")
+                    }
+                }
+                override fun onError(exc: ImageCaptureException) {
+                    Log.w(TAG, "Alarm snapshot failed: ${exc.message}")
+                }
+            },
+        )
+    }
+
+    private fun imageProxyToJpeg(image: ImageProxy): ByteArray {
+        val buffer = image.planes[0].buffer
+        val bytes  = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+        return bytes
+    }
+
     // ---- Helpers -------------------------------------------------------------
 
     private fun u32be(buf: ByteArray, offset: Int): Int {
@@ -646,5 +825,39 @@ class TerminalService : LifecycleService() {
         private const val TAG = "TerminalService"
         private const val CHANNEL_ID = "terminal"
         private const val NOTIFICATION_ID = 1
+
+        // Static so MainActivity can set it before the service instance exists.
+        // rebindAllCameras() reads this field directly — picks it up whenever it runs.
+        @Volatile var localPreviewProvider: androidx.camera.core.Preview.SurfaceProvider? = null
+            private set
+
+        @Volatile private var instance: TerminalService? = null
+
+        fun setLocalPreview(provider: androidx.camera.core.Preview.SurfaceProvider?) {
+            localPreviewProvider = provider
+            instance?.mainHandler?.post { instance?.rebindAllCameras() }
+        }
+
+        fun pauseCameras() {
+            localPreviewProvider = null
+            instance?.mainHandler?.post {
+                instance?.withCameraProvider { it.unbindAll() }
+            }
+        }
+
+        fun getDmsAlarmState(): com.example.jt808terminal.dms.DmsAlarmState? =
+            instance?.dmsAlarmState
+
+        fun toggleAudio(context: Context): Boolean {
+            val settings = AppSettings(context)
+            val newVal = !settings.dmsAudioEnabled
+            settings.dmsAudioEnabled = newVal
+            if (!newVal) instance?.tts?.stop()
+            return newVal
+        }
+
+        fun isAudioEnabled(context: Context) = AppSettings(context).dmsAudioEnabled
+
+        @Volatile var isAppInForeground: Boolean = false
     }
 }

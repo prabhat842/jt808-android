@@ -220,6 +220,35 @@ class Jt808TcpClientImpl(
         send(msgId, body)
     }
 
+    /**
+     * Sends 0x0800 MultimediaEventUpload followed by 0x0801 MultimediaDataUpload.
+     *
+     * The 0x0801 body (36-byte header + location block + JPEG payload) is typically
+     * larger than the 1023-byte JT808 packet limit and is automatically fragmented
+     * into sub-packets via [Jt808Codec.encodeFrames] (JT808-2013 §4.4.3 bit 13).
+     * Both messages use independent sequence numbers; the server matches them by mediaId.
+     */
+    fun sendMultimediaUpload(eventBody: ByteArray, dataBody: ByteArray) {
+        if (!authenticated) return
+        sendFrames(MsgId.MULTIMEDIA_EVENT_UPLOAD, eventBody)
+        sendFrames(MsgId.MULTIMEDIA_DATA_UPLOAD, dataBody)
+    }
+
+    @Synchronized
+    private fun sendFrames(msgId: Int, body: ByteArray) {
+        val out = output ?: return
+        try {
+            val seq    = seqGen.incrementAndGet() and 0xFFFF
+            val frames = Jt808Codec.encodeFrames(msgId, config.phoneNumber, seq, body)
+            for (frame in frames) out.write(frame)
+            out.flush()
+            Log.v(TAG, "TX 0x${msgId.toString(16).uppercase()} seq=$seq " +
+                "body=${body.size}B (${frames.size} packet(s))")
+        } catch (e: Exception) {
+            Log.w(TAG, "TX failed (0x${msgId.toString(16)}): ${e.message}")
+        }
+    }
+
     // --- Frame transmission ------------------------------------------------
 
     @Synchronized

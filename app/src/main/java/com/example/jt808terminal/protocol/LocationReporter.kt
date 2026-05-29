@@ -41,8 +41,29 @@ class LocationReporter(
     private val gpsPointDao: GpsPointDao? = null,
 ) {
     @Volatile private var latest: Location? = null
+    @Volatile private var previousAlarmWord: Long = 0L
 
-    private val locationListener = LocationListener { loc -> latest = loc }
+    /**
+     * Invoked (on the coroutine scope) when a JT808 alarm bit rises for the first time.
+     * Fired after the 0x0200 location report is queued so the server sees the alarm before
+     * the media upload arrives — mirrors TerminalSession.sendLocation in the simulator.
+     *
+     * Parameters: bitIndex, alarmFlags (full word at rise time), statusFlags, speedKph, latDeg, lonDeg
+     */
+    var onAlarmRising: ((bitIndex: Int, alarmFlags: Long, statusFlags: Long,
+                         speedKph: Double, latDeg: Double, lonDeg: Double) -> Unit)? = null
+
+    /** Returns the most recent GPS fix, or null when no fix has been received yet. */
+    fun latestLocation(): Location? = latest
+
+    private val locationListener = LocationListener { loc ->
+        latest = loc
+        // Update speed immediately on every GPS fix (1 s interval) so the UI overlay
+        // always shows fresh speed rather than waiting for the 10-second report cycle.
+        val kph = loc.speed * 3.6f
+        dmsAlarmState?.currentSpeedKph  = kph
+        adasAlarmState?.currentSpeedKph = kph
+    }
 
     @SuppressLint("MissingPermission")
     fun start() {
@@ -161,6 +182,21 @@ class LocationReporter(
                 Log.d(TAG, "Offline: GPS point buffered (${gpsPointDao.pendingCount()} pending)")
             }
         }
+
+        // Rising-edge detection — fire autonomous media upload for each newly set alarm bit.
+        // Mirrors TerminalSession.sendLocation rising-bit loop in the simulator.
+        val risingBits = alarmFlags and previousAlarmWord.inv()
+        if (risingBits != 0L) {
+            val cb = onAlarmRising
+            if (cb != null) {
+                for (bit in 0..31) {
+                    if ((risingBits and (1L shl bit)) != 0L) {
+                        cb.invoke(bit, alarmFlags, statusFlags, speedKph, latDeg, lonDeg)
+                    }
+                }
+            }
+        }
+        previousAlarmWord = alarmFlags
     }
 
     /**
