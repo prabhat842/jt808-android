@@ -21,6 +21,14 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var etPhone: EditText
     private lateinit var etTerminalId: EditText
     private lateinit var etVin: EditText
+    private lateinit var etDmsEar: EditText
+    private lateinit var etDmsMar: EditText
+    private lateinit var etDmsYaw: EditText
+    private lateinit var etDmsPitch: EditText
+    private lateinit var etDmsPerclosL1: EditText
+    private lateinit var etDmsPerclosL2: EditText
+    private lateinit var etDmsEyeBlink: EditText
+    private lateinit var etDmsJaw: EditText
     private lateinit var tvError: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,14 +37,22 @@ class SettingsActivity : AppCompatActivity() {
 
         settings = AppSettings(this)
 
-        etJt808Host  = findViewById(R.id.etJt808Host)
-        etJt808Port  = findViewById(R.id.etJt808Port)
-        etRtvsHost   = findViewById(R.id.etRtvsHost)
-        etRtvsPort   = findViewById(R.id.etRtvsPort)
-        etPhone      = findViewById(R.id.etPhone)
-        etTerminalId = findViewById(R.id.etTerminalId)
-        etVin        = findViewById(R.id.etVin)
-        tvError      = findViewById(R.id.tvError)
+        etJt808Host    = findViewById(R.id.etJt808Host)
+        etJt808Port    = findViewById(R.id.etJt808Port)
+        etRtvsHost     = findViewById(R.id.etRtvsHost)
+        etRtvsPort     = findViewById(R.id.etRtvsPort)
+        etPhone        = findViewById(R.id.etPhone)
+        etTerminalId   = findViewById(R.id.etTerminalId)
+        etVin          = findViewById(R.id.etVin)
+        etDmsEar       = findViewById(R.id.etDmsEar)
+        etDmsMar       = findViewById(R.id.etDmsMar)
+        etDmsYaw       = findViewById(R.id.etDmsYaw)
+        etDmsPitch     = findViewById(R.id.etDmsPitch)
+        etDmsPerclosL1 = findViewById(R.id.etDmsPerclosL1)
+        etDmsPerclosL2 = findViewById(R.id.etDmsPerclosL2)
+        etDmsEyeBlink  = findViewById(R.id.etDmsEyeBlink)
+        etDmsJaw       = findViewById(R.id.etDmsJaw)
+        tvError        = findViewById(R.id.tvError)
 
         loadCurrent()
 
@@ -52,6 +68,14 @@ class SettingsActivity : AppCompatActivity() {
         etPhone.setText(settings.phoneNumber)
         etTerminalId.setText(settings.terminalId)
         etVin.setText(settings.vin)
+        etDmsEar.setText("%.2f".format(settings.dmsEarClosed))
+        etDmsMar.setText("%.2f".format(settings.dmsMarYawn))
+        etDmsYaw.setText("%.2f".format(settings.dmsHeadYawRatio))
+        etDmsPitch.setText("%.2f".format(settings.dmsHeadPitchRatio))
+        etDmsPerclosL1.setText((settings.dmsPerclosL1 * 100).toInt().toString())
+        etDmsPerclosL2.setText((settings.dmsPerclosL2 * 100).toInt().toString())
+        etDmsEyeBlink.setText("%.2f".format(settings.dmsEyeBlinkThreshold))
+        etDmsJaw.setText("%.2f".format(settings.dmsJawOpenThreshold))
     }
 
     private fun save() {
@@ -73,6 +97,22 @@ class SettingsActivity : AppCompatActivity() {
             ?: run { showError("JT808 port must be 1–65535"); return }
         val rtvsPort  = rtvsPortS.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: run { showError("RTVS port must be 1–65535"); return }
+
+        // Parse DMS thresholds — silently keep existing value if field is blank or invalid
+        etDmsEar.text.toString().toFloatOrNull()?.let { settings.dmsEarClosed = it }
+        etDmsMar.text.toString().toFloatOrNull()?.let { settings.dmsMarYawn = it }
+        etDmsYaw.text.toString().toFloatOrNull()?.let { settings.dmsHeadYawRatio = it }
+        etDmsPitch.text.toString().toFloatOrNull()?.let { settings.dmsHeadPitchRatio = it }
+        etDmsEyeBlink.text.toString().toFloatOrNull()?.let { settings.dmsEyeBlinkThreshold = it }
+        etDmsJaw.text.toString().toFloatOrNull()?.let { settings.dmsJawOpenThreshold = it }
+        val l1 = etDmsPerclosL1.text.toString().toIntOrNull()
+        val l2 = etDmsPerclosL2.text.toString().toIntOrNull()
+        if (l1 != null && l2 != null && l1 >= 5 && l2 > l1 && l2 <= 95) {
+            settings.dmsPerclosL1 = l1 / 100f
+            settings.dmsPerclosL2 = l2 / 100f
+        } else if (l1 != null || l2 != null) {
+            showError("PERCLOS: Warning % must be < Danger %, both 5–95"); return
+        }
 
         settings.jt808Host   = jt808Host
         settings.jt808Port   = jt808Port

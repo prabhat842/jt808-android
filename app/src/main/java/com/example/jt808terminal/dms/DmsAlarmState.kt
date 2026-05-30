@@ -23,5 +23,11 @@ class DmsAlarmState {
     // Written by LocationReporter each cycle so DmsEngine can gate no-face check on speed.
     @Volatile var currentSpeedKph: Float = 0f
 
+    // UI display fields — per-frame detection results for on-screen status panel.
+    @Volatile var eyesClosed: Boolean = false
+    @Volatile var isYawning: Boolean = false
+    @Volatile var yawnCount: Int = 0
+    @Volatile var headDistracted: Boolean = false  // large yaw/pitch from forward gaze
+
     fun hasAlarm(): Boolean = behaviourFlags != 0
 }

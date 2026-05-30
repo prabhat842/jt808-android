@@ -1,4 +1,11 @@
-# Resume: Alarm Media Handling Implementation
+# Resume: Alarm Media Handling — COMPLETED (commit ac60486)
+
+> **Status: Done and pushed to origin/main on 2026-05-29.**
+> This document is kept for reference. No further work needed on this feature.
+
+---
+
+# Original Plan: Alarm Media Handling Implementation
 
 ## Context
 

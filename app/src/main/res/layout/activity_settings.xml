@@ -121,7 +121,7 @@
             style="@style/SettingsSectionLabel"
             android:text="VEHICLE REGISTRATION" />
 
-        <LinearLayout style="@style/SettingsCard" android:layout_marginBottom="28dp">
+        <LinearLayout style="@style/SettingsCard">
 
             <TextView style="@style/SettingsFieldLabel"
                 android:text="VIN / License Plate  (used in 0x0100 registration)" />
@@ -143,6 +143,93 @@
                 android:textColor="@color/goatai_muted"
                 android:textSize="11sp"
                 android:fontFamily="monospace" />
+        </LinearLayout>
+
+        <!-- ── DMS Calibration ──────────────────────────────────── -->
+        <TextView
+            style="@style/SettingsSectionLabel"
+            android:text="DMS CALIBRATION" />
+
+        <LinearLayout style="@style/SettingsCard" android:layout_marginBottom="28dp">
+
+            <TextView style="@style/SettingsFieldLabel"
+                android:text="Eye Closure — EAR  (lower = more sensitive, default 0.20)" />
+            <EditText
+                android:id="@+id/etDmsEar"
+                style="@style/SettingsEditText"
+                android:inputType="numberDecimal"
+                android:hint="0.20" />
+
+            <View style="@style/SettingsDivider" />
+
+            <TextView style="@style/SettingsFieldLabel"
+                android:text="Yawn — MAR  (lower = more sensitive, default 0.50)" />
+            <EditText
+                android:id="@+id/etDmsMar"
+                style="@style/SettingsEditText"
+                android:inputType="numberDecimal"
+                android:hint="0.50" />
+
+            <View style="@style/SettingsDivider" />
+
+            <TextView style="@style/SettingsFieldLabel"
+                android:text="Head Yaw ratio  (lower = triggers sooner left/right, default 0.25)" />
+            <EditText
+                android:id="@+id/etDmsYaw"
+                style="@style/SettingsEditText"
+                android:inputType="numberDecimal"
+                android:hint="0.25" />
+
+            <View style="@style/SettingsDivider" />
+
+            <TextView style="@style/SettingsFieldLabel"
+                android:text="Head Pitch ratio  (lower = triggers sooner up/down, default 0.15)" />
+            <EditText
+                android:id="@+id/etDmsPitch"
+                style="@style/SettingsEditText"
+                android:inputType="numberDecimal"
+                android:hint="0.15" />
+
+            <View style="@style/SettingsDivider" />
+
+            <TextView style="@style/SettingsFieldLabel"
+                android:text="PERCLOS Warning level %  (for fatigue level-1, default 35)" />
+            <EditText
+                android:id="@+id/etDmsPerclosL1"
+                style="@style/SettingsEditText"
+                android:inputType="number"
+                android:hint="35" />
+
+            <View style="@style/SettingsDivider" />
+
+            <TextView style="@style/SettingsFieldLabel"
+                android:text="PERCLOS Danger level %  (for fatigue level-2, default 50)" />
+            <EditText
+                android:id="@+id/etDmsPerclosL2"
+                style="@style/SettingsEditText"
+                android:inputType="number"
+                android:hint="50" />
+
+            <View style="@style/SettingsDivider" />
+
+            <TextView style="@style/SettingsFieldLabel"
+                android:text="Blend-shape Eye Blink score  (higher = less sensitive, default 0.50)" />
+            <EditText
+                android:id="@+id/etDmsEyeBlink"
+                style="@style/SettingsEditText"
+                android:inputType="numberDecimal"
+                android:hint="0.50" />
+
+            <View style="@style/SettingsDivider" />
+
+            <TextView style="@style/SettingsFieldLabel"
+                android:text="Blend-shape Jaw Open score  (lower = more sensitive, default 0.60)" />
+            <EditText
+                android:id="@+id/etDmsJaw"
+                style="@style/SettingsEditText"
+                android:inputType="numberDecimal"
+                android:hint="0.60" />
+
         </LinearLayout>
 
         <!-- ── Save button ───────────────────────────────────────── -->

@@ -205,7 +205,7 @@ object Jt1078Command {
         val hour  = fromBcd(buf[offset + 3])
         val min   = fromBcd(buf[offset + 4])
         val sec   = fromBcd(buf[offset + 5])
-        val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Shanghai"))
+        val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Kolkata"))
         cal.set(2000 + year, month - 1, day, hour, min, sec)
         cal.set(java.util.Calendar.MILLISECOND, 0)
         return cal.timeInMillis

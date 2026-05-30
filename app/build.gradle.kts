@@ -39,6 +39,10 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    aaptOptions {
+        noCompress += "task"
+        noCompress += "tflite"
+    }
 }
 
 dependencies {
@@ -51,8 +55,10 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.3.4")
     implementation("androidx.camera:camera-lifecycle:1.3.4")
     implementation("androidx.camera:camera-view:1.3.4")
-    // ML Kit Face Detection — Phase 4 DMS (PERCLOS, yawning)
-    implementation("com.google.mlkit:face-detection:16.1.7")
+    // MediaPipe Tasks Vision — Phase 4 DMS (478 landmarks + blend shapes)
+    implementation("com.google.mediapipe:tasks-vision:0.10.14")
+    // TFLite — Intel OMZ open-closed-eye-0001 dedicated eye state classifier
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
     // ML Kit Object Detection — Phase 5 ADAS (FCW, LDW, pedestrian) + Phase 6 BSD
     implementation("com.google.mlkit:object-detection:17.0.2")
     // CameraX VideoCapture — Phase 7 local recording

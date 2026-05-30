@@ -1,239 +1,372 @@
 package com.example.jt808terminal.dms
 
 import android.annotation.SuppressLint
-import android.os.Handler
-import android.os.HandlerThread
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.os.SystemClock
 import android.util.Log
 import android.util.Size
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.Face
-import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetector
-import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.google.mlkit.vision.face.FaceLandmark
+import com.example.jt808terminal.core.AppSettings
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
+import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
+import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
+import org.tensorflow.lite.Interpreter
+import java.io.FileInputStream
+import java.nio.ByteBuffer
+import java.nio.MappedByteBuffer
+import java.nio.channels.FileChannel
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import kotlin.math.abs
+import kotlin.math.sqrt
 
 /**
- * Driver Monitoring System engine.
+ * Driver Monitoring System — two-stage pipeline.
  *
- * Wires a CameraX ImageAnalysis use case to ML Kit Face Detection on a dedicated HandlerThread
- * so ML inference never touches the main/UI/camera thread.
+ * Stage 1 — MediaPipe FaceLandmarker v2 (blendshapes model):
+ *   • 478 3D face landmarks for head-pose estimation
+ *   • eyeBlinkLeft / eyeBlinkRight blend-shape scores → PERCLOS
+ *   • jawOpen blend-shape score → yawn detection
  *
- * Detects:
- *   PERCLOS fatigue — 60-second rolling window; flags bit 0 of behaviourFlags when ≥ 35%
- *   Yawning         — mouth open ratio > 0.20 of face height (suppressed for 10 s after trigger)
+ * Stage 2 — Intel OMZ open-closed-eye-0001 (TFLite, 26 KB):
+ *   • Dedicated binary eye-state classifier on 32×32 cropped eye patches
+ *   • Overrides blend-shape eye decision when the two disagree (TFLite wins)
+ *   • Gracefully absent: falls back to blend-shapes only if model file missing
  *
- * Phone use and smoking require a custom TFLite model (not included in Phase 4).
- * Seatbelt detection requires a secondary cabin-view camera (not included in Phase 4).
- *
- * Alarm bit wiring — JT808-2013 Table 24:
- *   Bit 14 = Fatigue driving warning (set when PERCLOS ≥ FATIGUE_THRESHOLD)
- *
- * Additional info — JT1078-2016 extension (ID 0x18):
- *   Behaviour flags WORD + fatigue degree BYTE
+ * PERCLOS and alarm logic are unchanged from the previous implementation.
  */
-class DmsEngine(private val alarmState: DmsAlarmState) {
-
-    private val handlerThread = HandlerThread("dms-analysis")
-    private var detector: FaceDetector? = null
+class DmsEngine(
+    private val context: Context,
+    private val alarmState: DmsAlarmState,
+) {
+    private var faceLandmarker: FaceLandmarker? = null
+    private var eyeClassifier: Interpreter? = null
+    private var analysisExecutor: ExecutorService? = null
     private val perclos = PerclosTracker(windowMs = 60_000L)
-    // Created once after handlerThread.start(); reused for all ML Kit callbacks.
-    private lateinit var dmsExecutor: java.util.concurrent.Executor
 
-    // HandlerThread-affine state (only touched from the DMS HandlerThread)
     private var lastYawnMs = 0L
-    private val yawnTimestamps = ArrayDeque<Long>()  // 10-min yawn count window
-    private var lastFaceSeenMs = 0L                  // for no-face timeout
+    private val yawnTimestamps = ArrayDeque<Long>()
+    private var lastFaceSeenMs = 0L
 
-    /** Invoked when alarm level first reaches 2 (danger). Triggers immediate 0x0200. */
+    // Thresholds loaded from AppSettings on each engine start.
+    private var eyeBlinkThreshold = 0.50f   // blend-shape score → closed
+    private var jawOpenThreshold  = 0.60f   // blend-shape score → yawning
+    private var perclosL1         = 0.35f
+    private var perclosL2         = 0.50f
+    private var headYawRatio      = 0.25f
+    private var headPitchRatio    = 0.15f
+
     var onAlarmLevelChange: ((Int) -> Unit)? = null
 
     companion object {
         private const val TAG = "DmsEngine"
-        // PERCLOS thresholds — spec §5.2: level 1 warning / level 2 danger
-        private const val PERCLOS_L1 = 0.35f   // 35% → level 1 warning
-        private const val PERCLOS_L2 = 0.50f   // 50% → level 2 danger + auto 0x9101
-        // Eye-open probability < 0.3 → consider eyes closed (ML Kit 0.0-1.0 range)
-        private const val EYE_CLOSED_PROB = 0.3f
-        // Landmark proxy: (noseBaseY → bottomMouthY) / faceHeight > 0.28 → yawning
-        private const val YAWN_THRESHOLD = 0.28f
-        // Suppress repeated yawn detection for 10 s
-        private const val YAWN_COOLDOWN_MS = 10_000L
-        // 3 yawns in 10-minute window → additional fatigue signal — spec §5.3
-        private const val YAWN_WINDOW_MS = 600_000L
-        private const val YAWN_COUNT_THRESHOLD = 3
-        // No face visible for 10 s while speed > 20 km/h → danger alarm — spec §5.2
-        private const val NO_FACE_TIMEOUT_MS = 10_000L
-        private const val NO_FACE_SPEED_KPH = 20f
+        private const val MODEL_LANDMARKS  = "face_landmarker_v2_with_blendshapes.task"
+        private const val MODEL_EYE_TFLITE = "open_closed_eye.tflite"
+
+        // Blend-shape category names (MediaPipe FaceLandmarker v2)
+        private const val BS_BLINK_L = "eyeBlinkLeft"
+        private const val BS_BLINK_R = "eyeBlinkRight"
+        private const val BS_JAW     = "jawOpen"
+
+        // EAR 6-point landmark indices (fallback when blend shapes unavailable)
+        private val LEFT_EYE  = intArrayOf(362, 385, 387, 263, 373, 380)
+        private val RIGHT_EYE = intArrayOf( 33, 160, 158, 133, 153, 144)
+
+        // Head-pose reference landmarks
+        private const val NOSE_TIP  = 4
+        private const val FOREHEAD  = 10
+        private const val CHIN      = 152
+        private const val EYE_L_OUT = 33
+        private const val EYE_R_OUT = 263
+
+        private const val YAWN_COOLDOWN_MS    = 10_000L
+        private const val YAWN_WINDOW_MS      = 600_000L
+        private const val YAWN_COUNT_THRESH   = 3
+        private const val NO_FACE_TIMEOUT_MS  = 10_000L
+        private const val NO_FACE_SPEED_KPH   = 20f
+
+        // TFLite model I/O — confirmed from onnx2tf conversion output:
+        //   input:  [1, 32, 32, 3]  float32  NHWC BGR
+        //   output: [1,  1,  1, 2]  float32  [closed_score, open_score]
+        private const val EYE_SIZE = 32
     }
 
-    /**
-     * Builds and returns the CameraX ImageAnalysis use case.
-     * The HandlerThread and detector are started here; frames won't flow until
-     * the use case is bound to a camera lifecycle by TerminalService.bindCamera().
-     * Call once; reuse the returned instance across streaming sessions.
-     */
-    fun getImageAnalysis(): ImageAnalysis {
-        handlerThread.start()
-        val handler = Handler(handlerThread.looper)
-        dmsExecutor = java.util.concurrent.Executor { cmd -> handler.post(cmd) }
+    // ── Initialisation ────────────────────────────────────────────────────────
 
-        // ACCURATE mode: single persistent interpreter — avoids XNNPack delegate
-        // re-initialization that occurs each frame with FAST mode's thread pool.
-        // CONTOUR_MODE_NONE + LANDMARK_MODE_ALL: landmarks include NOSE_BASE + BOTTOM_MOUTH
-        // for yawn detection — cheaper than full contours, sufficient accuracy.
-        detector = FaceDetection.getClient(
-            FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
-                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
-                .setMinFaceSize(0.15f)
-                .build()
-        )
+    fun getImageAnalysis(): ImageAnalysis {
+        val s = AppSettings(context)
+        eyeBlinkThreshold = s.dmsEyeBlinkThreshold
+        jawOpenThreshold  = s.dmsJawOpenThreshold
+        perclosL1         = s.dmsPerclosL1
+        perclosL2         = s.dmsPerclosL2
+        headYawRatio      = s.dmsHeadYawRatio
+        headPitchRatio    = s.dmsHeadPitchRatio
+        Log.i(TAG, "Thresholds — blink=$eyeBlinkThreshold jaw=$jawOpenThreshold " +
+                "PERCLOS=$perclosL1/$perclosL2 yaw=$headYawRatio pitch=$headPitchRatio")
+
+        // Stage 1 — MediaPipe blendshapes landmarker
+        val mpOptions = FaceLandmarker.FaceLandmarkerOptions.builder()
+            .setBaseOptions(BaseOptions.builder().setModelAssetPath(MODEL_LANDMARKS).build())
+            .setRunningMode(RunningMode.VIDEO)
+            .setNumFaces(1)
+            .setMinFaceDetectionConfidence(0.3f)
+            .setMinFacePresenceConfidence(0.3f)
+            .setMinTrackingConfidence(0.3f)
+            .setOutputFaceBlendshapes(true)
+            .setOutputFacialTransformationMatrixes(false)
+            .build()
+        faceLandmarker = FaceLandmarker.createFromOptions(context, mpOptions)
+        Log.i(TAG, "FaceLandmarker v2 (blendshapes) loaded")
+
+        // Stage 2 — TFLite eye state classifier (optional)
+        try {
+            val buf = loadModelBuffer(MODEL_EYE_TFLITE)
+            eyeClassifier = Interpreter(buf, Interpreter.Options().apply { setNumThreads(2) })
+            Log.i(TAG, "TFLite eye classifier loaded (${buf.capacity() / 1024} KB)")
+        } catch (e: Exception) {
+            Log.w(TAG, "TFLite eye model unavailable — blend shapes only: ${e.message}")
+        }
+
+        val executor = Executors.newSingleThreadExecutor()
+        analysisExecutor = executor
 
         val analysis = ImageAnalysis.Builder()
-            .setTargetResolution(Size(320, 240))
+            .setTargetResolution(Size(640, 480))
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
-
-        analysis.setAnalyzer(dmsExecutor) { proxy -> processProxy(proxy) }
-        Log.i(TAG, "ImageAnalysis use case ready")
+        analysis.setAnalyzer(executor) { proxy -> processProxy(proxy) }
         return analysis
     }
 
     fun stop() {
-        detector?.close()
-        detector = null
-        handlerThread.quitSafely()
-        alarmState.behaviourFlags = 0
-        alarmState.fatigueDegree = 0
-        alarmState.faceDetected = false
-        alarmState.alarmLevel = 0
+        analysisExecutor?.shutdown(); analysisExecutor = null
+        faceLandmarker?.close();     faceLandmarker = null
+        eyeClassifier?.close();      eyeClassifier = null
+        alarmState.behaviourFlags = 0; alarmState.fatigueDegree = 0
+        alarmState.faceDetected = false; alarmState.alarmLevel = 0
         Log.i(TAG, "DmsEngine stopped")
     }
 
+    // ── Frame processing ──────────────────────────────────────────────────────
+
     @SuppressLint("UnsafeOptInUsageError")
     private fun processProxy(proxy: ImageProxy) {
-        val mediaImage = proxy.image
-        if (mediaImage == null) { proxy.close(); return }
+        val flm = faceLandmarker ?: run { proxy.close(); return }
+        try {
+            val raw = proxy.toBitmap()
+            val deg = proxy.imageInfo.rotationDegrees
+            val bmp = if (deg != 0) Bitmap.createBitmap(
+                raw, 0, 0, raw.width, raw.height,
+                Matrix().apply { postRotate(deg.toFloat()) }, false)
+            else raw
 
-        val image = InputImage.fromMediaImage(mediaImage, proxy.imageInfo.rotationDegrees)
-        val det = detector
-        if (det == null) { proxy.close(); return }
-
-        det.process(image)
-            .addOnSuccessListener(dmsExecutor) { faces -> onFaces(faces) }
-            .addOnFailureListener(dmsExecutor) { e ->
-                Log.w(TAG, "Face detection failed: ${e.message}")
-            }
-            .addOnCompleteListener { proxy.close() }  // always release — any thread is fine
+            val result = flm.detectForVideo(BitmapImageBuilder(bmp).build(),
+                SystemClock.elapsedRealtime())
+            if (result.faceLandmarks().isEmpty())
+                Log.d(TAG, "No face — ${bmp.width}×${bmp.height} rot=${deg}°")
+            onResult(result, bmp)
+        } catch (e: Exception) {
+            Log.w(TAG, "processProxy error: ${e.message}")
+        } finally {
+            proxy.close()
+        }
     }
 
-    // Runs on the DMS HandlerThread.
-    private fun onFaces(faces: List<Face>) {
+    private fun onResult(result: FaceLandmarkerResult, bmp: Bitmap) {
         val now = System.currentTimeMillis()
 
-        if (faces.isEmpty()) {
+        if (result.faceLandmarks().isEmpty()) {
             alarmState.faceDetected = false
-            // Don't update PERCLOS — driver may be briefly looking away.
-            // Check no-face timeout: if face absent for > 10 s while driving → danger alarm.
+            alarmState.eyesClosed = false; alarmState.isYawning = false
+            alarmState.headDistracted = false
             if (lastFaceSeenMs > 0
                 && (now - lastFaceSeenMs) > NO_FACE_TIMEOUT_MS
-                && alarmState.currentSpeedKph > NO_FACE_SPEED_KPH
-            ) {
-                val prevLevel = alarmState.alarmLevel
+                && alarmState.currentSpeedKph > NO_FACE_SPEED_KPH) {
+                val prev = alarmState.alarmLevel
                 alarmState.behaviourFlags = alarmState.behaviourFlags or 0x01
-                alarmState.fatigueDegree = 100
-                updateAlarmLevel(2, prevLevel)
-                Log.w(TAG, "No face for ${(now - lastFaceSeenMs) / 1000}s at ${alarmState.currentSpeedKph}km/h — danger alarm")
+                alarmState.fatigueDegree  = 100
+                updateAlarmLevel(2, prev)
+                Log.w(TAG, "No face ${(now-lastFaceSeenMs)/1000}s @ ${alarmState.currentSpeedKph}km/h")
             }
             return
         }
 
-        val face = faces[0]   // primary face (largest area, first in list)
+        val lm = result.faceLandmarks()[0]
         lastFaceSeenMs = now
         alarmState.faceDetected = true
 
-        // ----- PERCLOS (eye closure) ----------------------------------------
-        val leftP  = face.leftEyeOpenProbability
-        val rightP = face.rightEyeOpenProbability
-        val eyesClosed = when {
-            leftP != null && rightP != null -> ((leftP + rightP) / 2f) < EYE_CLOSED_PROB
-            leftP  != null -> leftP  < EYE_CLOSED_PROB
-            rightP != null -> rightP < EYE_CLOSED_PROB
-            else -> false   // no eye data — skip sample
+        // ── Stage 1: Blend-shape eye & jaw scores ─────────────────────────
+        val bs = result.faceBlendshapes()
+        var eyesClosed: Boolean
+        var isYawning: Boolean
+
+        if (bs.isPresent && bs.get().isNotEmpty()) {
+            val cats = bs.get()[0]
+            val blinkL = cats.find { it.categoryName() == BS_BLINK_L }?.score() ?: 0f
+            val blinkR = cats.find { it.categoryName() == BS_BLINK_R }?.score() ?: 0f
+            val blinkAvg = (blinkL + blinkR) / 2f
+            val jawOpen  = cats.find { it.categoryName() == BS_JAW }?.score() ?: 0f
+
+            eyesClosed = blinkAvg > eyeBlinkThreshold
+            isYawning  = jawOpen  > jawOpenThreshold
+
+            Log.v(TAG, "BS  blink=%.2f jaw=%.2f".format(blinkAvg, jawOpen))
+
+            // ── Stage 2: TFLite eye classifier override ───────────────────
+            val clf = eyeClassifier
+            if (clf != null) {
+                val tflClosed = inferEyeState(clf, bmp, lm)
+                if (tflClosed != null && tflClosed != eyesClosed) {
+                    Log.d(TAG, "TFLite overrides blend: eyesClosed $eyesClosed→$tflClosed")
+                    eyesClosed = tflClosed
+                }
+            }
+        } else {
+            // Fallback EAR (blend shapes absent — model mismatch or older device)
+            val earL = ear(lm, LEFT_EYE); val earR = ear(lm, RIGHT_EYE)
+            eyesClosed = (earL + earR) / 2f < 0.20f
+            isYawning  = mar(lm) > 0.50f
+            Log.v(TAG, "EAR fallback earL=%.2f earR=%.2f".format(earL, earR))
         }
+
         perclos.record(eyesClosed, now)
 
-        val perclosValue = perclos.perclos()
-        val fatigueDeg   = (perclosValue * 100).toInt().coerceIn(0, 100)
-
-        // ----- Yawning (mouth contour) — spec §5.3 --------------------------
-        val isYawning = detectYawning(face)
         if (isYawning && (now - lastYawnMs) > YAWN_COOLDOWN_MS) {
-            lastYawnMs = now
-            recordYawn(now)
-            Log.i(TAG, "Yawn detected — count in 10 min: ${yawnCount()}")
+            lastYawnMs = now; recordYawn(now)
+            Log.i(TAG, "Yawn count=${yawnCount()}")
         }
 
-        // ----- Alarm level — spec §5.2 --------------------------------------
-        // Yawn count ≥ 3 in 10 min contributes to level 1 fatigue signal.
-        val yawnFatigue = yawnCount() >= YAWN_COUNT_THRESHOLD
+        val headDistracted = headDistracted(lm)
+        val perclosVal = perclos.perclos()
+        val fatigueDeg = (perclosVal * 100).toInt().coerceIn(0, 100)
         val newLevel = when {
-            perclosValue >= PERCLOS_L2 -> 2          // > 50% → danger
-            perclosValue >= PERCLOS_L1 -> 1          // 35-50% → warning
-            yawnFatigue               -> 1           // yawn count threshold
-            else                      -> 0
+            perclosVal >= perclosL2           -> 2
+            perclosVal >= perclosL1           -> 1
+            yawnCount() >= YAWN_COUNT_THRESH  -> 1
+            else                              -> 0
         }
 
-        // ----- Update shared alarm state ------------------------------------
-        var flags = 0
-        if (newLevel > 0) flags = flags or 0x01  // bit 0: fatigue
-        // bit 1 (phone) / bit 2 (smoking) require custom TFLite model
+        val prev = alarmState.alarmLevel
+        alarmState.behaviourFlags  = if (newLevel > 0) alarmState.behaviourFlags or 0x01 else 0
+        alarmState.fatigueDegree   = fatigueDeg
+        alarmState.eyesClosed      = eyesClosed
+        alarmState.isYawning       = isYawning
+        alarmState.yawnCount       = yawnCount()
+        alarmState.headDistracted  = headDistracted
+        updateAlarmLevel(newLevel, prev)
 
-        val prevLevel = alarmState.alarmLevel
-        alarmState.behaviourFlags = flags
-        alarmState.fatigueDegree  = fatigueDeg
-        updateAlarmLevel(newLevel, prevLevel)
-
-        Log.v(TAG, "PERCLOS=${fatigueDeg}% level=$newLevel yawns=${yawnCount()} eyesClosed=$eyesClosed")
+        Log.v(TAG, "eyes=$eyesClosed yawn=$isYawning PERCLOS=${fatigueDeg}%% level=$newLevel")
     }
+
+    // ── TFLite eye inference ──────────────────────────────────────────────────
+
+    /**
+     * Crops both eyes, runs TFLite classifier on each, returns true if either eye is closed.
+     * Returns null if crops are too small or inference fails.
+     */
+    private fun inferEyeState(clf: Interpreter, bmp: Bitmap, lm: List<NormalizedLandmark>): Boolean? {
+        val leftClosed  = classifyEye(clf, bmp, lm, LEFT_EYE)
+        val rightClosed = classifyEye(clf, bmp, lm, RIGHT_EYE)
+        return if (leftClosed != null || rightClosed != null)
+            (leftClosed ?: false) || (rightClosed ?: false)
+        else null
+    }
+
+    private fun classifyEye(clf: Interpreter, bmp: Bitmap,
+                            lm: List<NormalizedLandmark>, idx: IntArray): Boolean? {
+        val crop = cropEye(bmp, lm, idx) ?: return null
+        // Input: [1, 32, 32, 3]  float32  NHWC  BGR 0-1
+        val input = Array(1) { Array(EYE_SIZE) { Array(EYE_SIZE) { FloatArray(3) } } }
+        for (y in 0 until EYE_SIZE) for (x in 0 until EYE_SIZE) {
+            val px = crop.getPixel(x, y)
+            input[0][y][x][0] = (px and 0xFF) / 255f          // B
+            input[0][y][x][1] = (px shr 8 and 0xFF) / 255f    // G
+            input[0][y][x][2] = (px shr 16 and 0xFF) / 255f   // R (original model is BGR)
+        }
+        // Output: [1, 1, 1, 2]  → [closed_score, open_score]
+        val output = Array(1) { Array(1) { Array(1) { FloatArray(2) } } }
+        return try {
+            clf.run(input, output)
+            val closed = output[0][0][0][0]; val open = output[0][0][0][1]
+            Log.v(TAG, "TFLite eye — closed=%.3f open=%.3f".format(closed, open))
+            closed > open
+        } catch (e: Exception) {
+            Log.w(TAG, "TFLite inference error: ${e.message}"); null
+        }
+    }
+
+    private fun cropEye(bmp: Bitmap, lm: List<NormalizedLandmark>, idx: IntArray): Bitmap? {
+        val xs = idx.map { lm[it].x() * bmp.width  }
+        val ys = idx.map { lm[it].y() * bmp.height }
+        val cx = xs.average().toFloat(); val cy = ys.average().toFloat()
+        val half = ((xs.max() - xs.min()) * 1.2f).toInt().coerceAtLeast(8)
+        val l = (cx - half).toInt().coerceIn(0, bmp.width  - 1)
+        val t = (cy - half).toInt().coerceIn(0, bmp.height - 1)
+        val r = (cx + half).toInt().coerceIn(l + 1, bmp.width)
+        val b = (cy + half).toInt().coerceIn(t + 1, bmp.height)
+        if (r - l < 4 || b - t < 4) return null
+        val crop = Bitmap.createBitmap(bmp, l, t, r - l, b - t)
+        return Bitmap.createScaledBitmap(crop, EYE_SIZE, EYE_SIZE, true)
+    }
+
+    // ── Geometry helpers ──────────────────────────────────────────────────────
+
+    private fun ear(lm: List<NormalizedLandmark>, idx: IntArray): Float {
+        val a = dist(lm[idx[1]], lm[idx[5]]); val b = dist(lm[idx[2]], lm[idx[4]])
+        val c = dist(lm[idx[0]], lm[idx[3]])
+        return if (c < 1e-6f) 0f else (a + b) / (2f * c)
+    }
+
+    private fun mar(lm: List<NormalizedLandmark>): Float {
+        val h = dist(lm[13], lm[14]); val w = dist(lm[61], lm[291])
+        return if (w < 1e-6f) 0f else h / w
+    }
+
+    private fun headDistracted(lm: List<NormalizedLandmark>): Boolean {
+        val noseX   = lm[NOSE_TIP].x()
+        val eyeMidX = (lm[EYE_L_OUT].x() + lm[EYE_R_OUT].x()) / 2f
+        val halfSpan = abs(lm[EYE_R_OUT].x() - lm[EYE_L_OUT].x()) / 2f
+        val yawRatio = if (halfSpan > 0.01f) abs(noseX - eyeMidX) / halfSpan else 0f
+
+        val noseTipY = lm[NOSE_TIP].y()
+        val faceH    = lm[CHIN].y() - lm[FOREHEAD].y()
+        val pitchRatio = if (faceH > 0.01f) abs((noseTipY - lm[FOREHEAD].y()) / faceH - 0.55f) else 0f
+
+        return yawRatio > headYawRatio || pitchRatio > headPitchRatio
+    }
+
+    private fun dist(a: NormalizedLandmark, b: NormalizedLandmark): Float {
+        val dx = a.x() - b.x(); val dy = a.y() - b.y()
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    // ── TFLite model loading ──────────────────────────────────────────────────
+
+    private fun loadModelBuffer(assetName: String): MappedByteBuffer {
+        val afd = context.assets.openFd(assetName)
+        return FileInputStream(afd.fileDescriptor).channel.map(
+            FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
+    }
+
+    // ── Alarm helpers ─────────────────────────────────────────────────────────
 
     private fun updateAlarmLevel(newLevel: Int, prevLevel: Int) {
         alarmState.alarmLevel = newLevel
-        // Fire callback only when first reaching danger (level 2) — triggers immediate 0x0200.
-        if (newLevel >= 2 && prevLevel < 2) {
-            onAlarmLevelChange?.invoke(newLevel)
-        }
+        if (newLevel >= 2 && prevLevel < 2) onAlarmLevelChange?.invoke(newLevel)
     }
 
     private fun recordYawn(now: Long) {
         yawnTimestamps.addLast(now)
         val cutoff = now - YAWN_WINDOW_MS
-        while (yawnTimestamps.isNotEmpty() && yawnTimestamps.first() < cutoff) {
+        while (yawnTimestamps.isNotEmpty() && yawnTimestamps.first() < cutoff)
             yawnTimestamps.removeFirst()
-        }
     }
 
     private fun yawnCount() = yawnTimestamps.size
-
-    /**
-     * Estimates mouth openness from NOSE_BASE and BOTTOM_MOUTH landmarks.
-     * Uses (noseY → mouthBottomY) span relative to the face bounding-box height.
-     * LANDMARK_MODE_ALL must be set; contours are not needed.
-     *
-     * Vertical lip gap is not directly available without contours, so we proxy it as:
-     *   gap ≈ bottomMouthY − noseBaseY   (increases as mouth opens)
-     * Calibrated threshold at 0.28 × faceHeight (equivalent to contour ratio of 0.20).
-     */
-    private fun detectYawning(face: Face): Boolean {
-        val nose   = face.getLandmark(FaceLandmark.NOSE_BASE)?.position ?: return false
-        val bottom = face.getLandmark(FaceLandmark.BOTTOM_MOUTH)?.position ?: return false
-        val faceH  = face.boundingBox.height().toFloat()
-        if (faceH <= 0f) return false
-        val gap = bottom.y - nose.y   // positive when mouth hangs open
-        return (gap / faceH) > YAWN_THRESHOLD
-    }
 }

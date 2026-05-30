@@ -80,6 +80,53 @@ class AppSettings(context: Context) {
         get() = prefs.getInt(KEY_MAX_STORAGE_MB, 2048)
         set(v) { prefs.edit().putInt(KEY_MAX_STORAGE_MB, v.coerceAtLeast(128)).apply() }
 
+    /** DMS voice alerts enabled — user can mute during testing. Persists across restarts. */
+    var dmsAudioEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DMS_AUDIO, true)
+        set(v) { prefs.edit().putBoolean(KEY_DMS_AUDIO, v).apply() }
+
+    // ── DMS detection thresholds (tuned via Settings screen) ──────────────────
+
+    /** EAR below this → eyes closed. Lower = more sensitive. Default 0.20. */
+    var dmsEarClosed: Float
+        get() = prefs.getFloat(KEY_DMS_EAR, 0.20f)
+        set(v) { prefs.edit().putFloat(KEY_DMS_EAR, v.coerceIn(0.05f, 0.50f)).apply() }
+
+    /** MAR above this → yawning. Lower = more sensitive. Default 0.50. */
+    var dmsMarYawn: Float
+        get() = prefs.getFloat(KEY_DMS_MAR, 0.50f)
+        set(v) { prefs.edit().putFloat(KEY_DMS_MAR, v.coerceIn(0.10f, 0.90f)).apply() }
+
+    /** Nose-offset ratio for head yaw distraction. Lower = more sensitive. Default 0.25. */
+    var dmsHeadYawRatio: Float
+        get() = prefs.getFloat(KEY_DMS_YAW, 0.25f)
+        set(v) { prefs.edit().putFloat(KEY_DMS_YAW, v.coerceIn(0.05f, 0.80f)).apply() }
+
+    /** Nose-offset ratio for head pitch distraction. Lower = more sensitive. Default 0.15. */
+    var dmsHeadPitchRatio: Float
+        get() = prefs.getFloat(KEY_DMS_PITCH, 0.15f)
+        set(v) { prefs.edit().putFloat(KEY_DMS_PITCH, v.coerceIn(0.05f, 0.60f)).apply() }
+
+    /** eyeBlinkLeft/Right blend-shape score above which eyes are closed. Default 0.50. */
+    var dmsEyeBlinkThreshold: Float
+        get() = prefs.getFloat(KEY_DMS_BLINK, 0.50f)
+        set(v) { prefs.edit().putFloat(KEY_DMS_BLINK, v.coerceIn(0.10f, 0.90f)).apply() }
+
+    /** jawOpen blend-shape score above which yawning is detected. Default 0.60. */
+    var dmsJawOpenThreshold: Float
+        get() = prefs.getFloat(KEY_DMS_JAW, 0.60f)
+        set(v) { prefs.edit().putFloat(KEY_DMS_JAW, v.coerceIn(0.10f, 0.95f)).apply() }
+
+    /** PERCLOS fraction for level-1 fatigue warning. Default 0.35 (35 %). */
+    var dmsPerclosL1: Float
+        get() = prefs.getFloat(KEY_DMS_PERCLOS_L1, 0.35f)
+        set(v) { prefs.edit().putFloat(KEY_DMS_PERCLOS_L1, v.coerceIn(0.05f, 0.95f)).apply() }
+
+    /** PERCLOS fraction for level-2 fatigue danger. Default 0.50 (50 %). */
+    var dmsPerclosL2: Float
+        get() = prefs.getFloat(KEY_DMS_PERCLOS_L2, 0.50f)
+        set(v) { prefs.edit().putFloat(KEY_DMS_PERCLOS_L2, v.coerceIn(0.05f, 0.95f)).apply() }
+
     fun isConfigured() = jt808Host.isNotBlank() && rtvsHost.isNotBlank()
 
     companion object {
@@ -98,5 +145,14 @@ class AppSettings(context: Context) {
         private const val KEY_OVERSPEED_ALARM_KPH = "overspeed_alarm_kph"
         private const val KEY_OVERSPEED_GAP       = "overspeed_gap_tenth_kph"
         private const val KEY_MAX_STORAGE_MB      = "max_storage_mb"
+        private const val KEY_DMS_AUDIO           = "dms_audio_enabled"
+        private const val KEY_DMS_EAR             = "dms_ear_closed"
+        private const val KEY_DMS_MAR             = "dms_mar_yawn"
+        private const val KEY_DMS_YAW             = "dms_head_yaw_ratio"
+        private const val KEY_DMS_PITCH           = "dms_head_pitch_ratio"
+        private const val KEY_DMS_PERCLOS_L1      = "dms_perclos_l1"
+        private const val KEY_DMS_PERCLOS_L2      = "dms_perclos_l2"
+        private const val KEY_DMS_BLINK           = "dms_eye_blink_threshold"
+        private const val KEY_DMS_JAW             = "dms_jaw_open_threshold"
     }
 }

@@ -4,12 +4,19 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale as JavaLocale
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import com.example.jt808terminal.R
 import com.example.jt808terminal.core.AppSettings
@@ -18,6 +25,15 @@ import com.example.jt808terminal.service.TerminalService
 class MainActivity : AppCompatActivity() {
 
     private lateinit var settings: AppSettings
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val dtFormatter = SimpleDateFormat("dd MMM  HH:mm:ss", JavaLocale.US)
+    private val dmsPoller = object : Runnable {
+        override fun run() {
+            updateDmsPanel()
+            updateSpeedTime()
+            uiHandler.postDelayed(this, 500)
+        }
+    }
 
     private val permissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -46,6 +62,11 @@ class MainActivity : AppCompatActivity() {
             settingsLauncher.launch(Intent(this, SettingsActivity::class.java))
         }
 
+        findViewById<TextView>(R.id.btnMuteAudio).setOnClickListener {
+            val enabled = TerminalService.toggleAudio(this)
+            updateMuteButton(enabled)
+        }
+
         refreshServerDisplay()
         refreshPermissionsRow()
         requestPermissionsAndStart()
@@ -53,7 +74,24 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        TerminalService.isAppInForeground = true
+        TerminalService.setLocalPreview(findViewById<PreviewView>(R.id.previewView).surfaceProvider)
+        updateMuteButton(TerminalService.isAudioEnabled(this))
         refreshServerDisplay()
+        uiHandler.post(dmsPoller)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        TerminalService.isAppInForeground = false
+        TerminalService.pauseCameras()
+        uiHandler.removeCallbacks(dmsPoller)
+    }
+
+    // Called when user explicitly leaves (Home / Recents) — not when launching SettingsActivity.
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        finish()
     }
 
     private fun refreshServerDisplay() {
@@ -93,6 +131,43 @@ class MainActivity : AppCompatActivity() {
         val tv = findViewById<TextView>(R.id.tvServiceStatus)
         tv.text = text
         tv.setTextColor(if (ok) 0xFF4CAF50.toInt() else 0xFFFF9800.toInt())
+    }
+
+    private fun updateSpeedTime() {
+        val speed = TerminalService.getDmsAlarmState()?.currentSpeedKph ?: 0f
+        val dt = dtFormatter.format(Date())
+        findViewById<TextView>(R.id.tvSpeedTime).text =
+            "${speed.toInt()} km/h\n$dt"
+    }
+
+    private fun updateMuteButton(audioEnabled: Boolean) {
+        findViewById<TextView>(R.id.btnMuteAudio).text = if (audioEnabled) "🔊" else "🔇"
+    }
+
+    private fun updateDmsPanel() {
+        val overlay = findViewById<TextView>(R.id.tvDmsOverlay)
+        val s = TerminalService.getDmsAlarmState()
+
+        val alerts = mutableListOf<String>()
+        if (s != null) {
+            if (!s.faceDetected)  alerts += "⚠ Face Missing"
+            if (s.eyesClosed)     alerts += "⚠ Eyes Closed"
+            if (s.isYawning)      alerts += "⚠ Yawning (${s.yawnCount}x)"
+            if (s.headDistracted) alerts += "⚠ Head Distracted"
+            if (s.alarmLevel >= 2) alerts += "🚨 Fatigue Danger (${s.fatigueDegree}%)"
+            else if (s.alarmLevel == 1) alerts += "⚠ Fatigue Warning (${s.fatigueDegree}%)"
+        }
+
+        if (alerts.isEmpty()) {
+            overlay.visibility = View.GONE
+        } else {
+            overlay.text = alerts.joinToString("   ")
+            overlay.setTextColor(
+                if (s?.alarmLevel ?: 0 >= 2) Color.parseColor("#FF5252")
+                else Color.parseColor("#FFC107")
+            )
+            overlay.visibility = View.VISIBLE
+        }
     }
 
     private fun startTerminalService() {
